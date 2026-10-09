@@ -52,7 +52,6 @@ Graduation-Project/
 ├── prompts/                # system_prompt.md 等提示词
 ├── utils/                  # 日志、路径、提示词加载等工具
 ├── api/                    # HTTP 接口层（待实现）
-├── test/                   # 测试与调试脚本
 ├── docker-compose.yml      # etcd / MinIO / Milvus / Attu / PostgreSQL
 └── pyproject.toml
 ```
@@ -121,7 +120,7 @@ with postgres_checkpointer() as checkpointer:
 ## 说明
 
 - `.env` 中的密钥不会被提交，请参考 `.env.example` 自行配置
-- `data/` 与 `logs/` 为本地调试样本与运行日志，不纳入版本控制
+- `data/`、`logs/`、`test/` 为本地调试样本、运行日志与测试脚本，不纳入版本控制
 - 首次运行时 `postgres_checkpointer` 会自动创建 LangGraph 检查点表，可重复调用
 - `api/` 与 `vector_store/` 为规划中的模块
 
