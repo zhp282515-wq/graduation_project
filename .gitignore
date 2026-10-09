@@ -18,7 +18,6 @@ venv/
 # 运行时产物
 logs/
 *.log
-vector_store/
 checkpoint/*.db
 
 # 测试与调试样本，不公开
