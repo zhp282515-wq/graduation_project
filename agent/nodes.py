@@ -8,12 +8,13 @@ from models.dashscope.Qwen_model import DashScopeProvider
 from models.openai.ChatGPT import OpenAIProvider
 from .summarizer import Summarizer
 from utils.logger_tool import logger
+from datetime import datetime
 
 
 def create_nodes(
     model: BaseProvider,
     registry: ToolRegistry,
-    system_message: ChatMessage,
+    prompts: str | None,
     default_max_turns: int,
     summarizer: Summarizer,
 ) -> dict[str, Any]:
@@ -34,6 +35,20 @@ def create_nodes(
         }
 
     def llm_node(state: AgentState) -> AgentState:
+
+        if prompts is None:
+            system_message = ChatMessage(
+                role="system",
+                content=[
+                    {"type": "text", "text": f"# 【重要背景】当前会话时间戳：{datetime.now().strftime("%Y年%m月%d日 %H时%M分%S秒")}"}
+                ],
+            )
+        else:
+            system_message = ChatMessage(
+                role="system",
+                content=[{"type": "text", "text": f"# 【重要背景】当前会话时间戳：{datetime.now().strftime("%Y年%m月%d日 %H时%M分%S秒")}\n{prompts}"}],
+            )
+
         writer = get_stream_writer()
 
         content_parts: list[str] = []

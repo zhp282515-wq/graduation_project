@@ -1,10 +1,9 @@
-from datetime import datetime
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from collections.abc import Iterator
 from typing import Any
 
-from models.base import BaseProvider, ChatMessage
+from models.base import BaseProvider
 from .graph import build_graph
 from .nodes import create_nodes
 from .state import AgentInput
@@ -24,17 +23,6 @@ class AgentRuntime:
         summary_model: BaseProvider | None = None,
     ):
         self.default_max_turns = default_max_turns
-        current_time = datetime.now().strftime("%Y年%m月%d日 %H时%M分%S秒")
-
-        if prompts is None:
-            prompt = f"- 【重要背景】当前会话创建时间戳：{current_time}"
-        else:
-            prompt = prompts + f"\n- 【重要背景】当前会话创建时间戳：{current_time}"
-
-        system_message = ChatMessage(
-            role="system",
-            content=[{"type": "text", "text": prompt}],
-        )
 
         summarizer = Summarizer(
             summary_model or model,
@@ -45,7 +33,7 @@ class AgentRuntime:
         nodes = create_nodes(
             model=model,
             registry=registry,
-            system_message=system_message,
+            prompts=prompts,
             default_max_turns=default_max_turns,
             summarizer=summarizer,
         )

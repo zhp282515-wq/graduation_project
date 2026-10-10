@@ -25,3 +25,6 @@ data/
 
 # 测试与调试脚本，不公开
 test/
+
+# MinerU 解析产物（含原始文档与图片），本地可重新生成
+knowledge/parser_data/

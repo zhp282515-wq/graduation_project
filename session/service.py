@@ -6,6 +6,7 @@ from agent.runtime import AgentRuntime
 from agent.state import AgentInput
 from session.models import DEFAULT_SESSION_TITLE, Message, Session
 from session.ports import SessionRepository
+from utils.image_tool import build_query
 from utils.logger_tool import logger
 
 _AUTOTITLE_MAX_LEN = 30
@@ -52,23 +53,29 @@ class SessionService:
         session_id: str,
         text: str,
         *,
+        images: list[str] | None = None,
         max_turns: int | None = None,
         enable_thinking: bool | None = None,
+        reasoning_effort: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         """把一条用户消息喂给 Agent，透传事件流，并在结束时落库。"""
         session = self._repo.get_session(session_id)
         if session is None:
             raise ValueError(f"会话不存在：{session_id}")
 
-        self._repo.add_message(session_id, "user", text)
+        # 落库只存文本 + 占位，图片本身在 checkpoint 里，见"决策 2"
+        stored = f"[图片×{len(images)}] {text}" if images else text
+        self._repo.add_message(session_id, "user", stored)
         if session.title == DEFAULT_SESSION_TITLE:
-            self._repo.update_session_title(session_id, text[:_AUTOTITLE_MAX_LEN])
+            self._repo.update_session_title(session_id, text[:_AUTOTITLE_MAX_LEN] or "图片消息")
 
-        agent_input: AgentInput = {"query": [{"type": "text", "text": text}]}
+        agent_input: AgentInput = {"query": build_query(text, images)}
         if max_turns is not None:
             agent_input["max_turns"] = max_turns
         if enable_thinking is not None:
             agent_input["enable_thinking"] = enable_thinking
+        if reasoning_effort is not None:
+            agent_input["reasoning_effort"] = reasoning_effort
 
         started = time.perf_counter()
         final_content = ""
