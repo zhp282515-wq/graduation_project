@@ -23,15 +23,25 @@ class ToolResult:
 
 
 def _find_argument_problem(schema: dict[str, Any], arguments: dict[str, Any]) -> str | None:
+    props = schema.get("properties", {})
+
     for field in schema.get("required", []):
         if field not in arguments:
             return f"缺少必填参数 {field}"
 
     for field, value in arguments.items():
-        json_type = schema.get("properties", {}).get(field, {}).get("type")
-        check = _TYPE_CHECKS.get(json_type)
-        if check and not check(value):
-            return f"参数 {field} 应为 {json_type} 类型"
+        if field not in props:
+            return f"不支持的参数 {field}，可用参数：{', '.join(props) or '无'}"
+
+        declared = props[field].get("type")
+        types = declared if isinstance(declared, list) else [declared]
+
+        if value is None and "null" in types:
+            continue
+
+        checks = [c for t in types if isinstance(t, str) and (c := _TYPE_CHECKS.get(t))]
+        if checks and not any(c(value) for c in checks):
+            return f"参数 {field} 应为 {' 或 '.join(map(str, types))} 类型"
 
     return None
 

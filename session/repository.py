@@ -30,10 +30,17 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id, id);
 """
 
+# 迁移单独放：必须在建索引之前跑，且不能带 NOT NULL DEFAULT
+# ——那样旧行会被静默填成空串，后面回填时就分不清“空值”和“新加的”了。
+_MIGRATE = """
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT;
+"""
+
 
 def _to_session(row: dict[str, Any]) -> Session:
     return Session(
         id=row["id"],
+        user_id=row["user_id"],
         title=row["title"],
         status=row["status"],
         created_at=row["created_at"],
@@ -57,56 +64,77 @@ def _to_message(row: dict[str, Any]) -> Message:
 class PostgresSessionRepository:
     """基于 psycopg 的同步实现。连接由外部注入，生命周期不归它管。"""
 
-    def __init__(self, conn: psycopg.Connection):
+    def __init__(self, conn: psycopg.Connection, *, legacy_user_id: str = ""):
         self._conn = conn
+        self._legacy_user_id = legacy_user_id
 
     def setup(self) -> None:
-        """建表，幂等，可重复调用。"""
+        """建表 + 迁移 + 建索引，幂等，可重复调用。
+
+        顺序不能变：索引引用 user_id，必须先补列再建索引。
+        """
         with self._conn.cursor() as cur:
             cur.execute(_SCHEMA)
+            cur.execute(_MIGRATE)
+            cur.execute(
+                "UPDATE sessions SET user_id = %s WHERE user_id IS NULL OR user_id = ''",
+                (self._legacy_user_id,),
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id, updated_at DESC)"
+            )
         self._conn.commit()
 
-    def create_session(self, title: str) -> Session:
+    def create_session(self, user_id: str, title: str) -> Session:
         session_id = uuid4().hex
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                INSERT INTO sessions (id, title)
-                VALUES (%s, %s)
-                RETURNING id, title, status, created_at, updated_at
+                INSERT INTO sessions (id, user_id, title)
+                VALUES (%s, %s, %s)
+                RETURNING id, user_id, title, status, created_at, updated_at
                 """,
-                (session_id, title),
+                (session_id, user_id, title),
             )
             row = cur.fetchone()
         self._conn.commit()
         return _to_session(row)
 
-    def get_session(self, session_id: str) -> Session | None:
+    def get_session(self, user_id: str, session_id: str) -> Session | None:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                "SELECT id, title, status, created_at, updated_at FROM sessions WHERE id = %s",
-                (session_id,),
+                """
+                SELECT id, user_id, title, status, created_at, updated_at
+                FROM sessions
+                WHERE id = %s AND user_id = %s
+                """,
+                (session_id, user_id),
             )
             row = cur.fetchone()
         return _to_session(row) if row else None
 
-    def list_sessions(self) -> list[Session]:
+    def list_sessions(self, user_id: str) -> list[Session]:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT id, title, status, created_at, updated_at
+                SELECT id, user_id, title, status, created_at, updated_at
                 FROM sessions
+                WHERE user_id = %s
                 ORDER BY updated_at DESC
-                """
+                """,
+                (user_id,),
             )
             rows = cur.fetchall()
         return [_to_session(row) for row in rows]
 
-    def update_session_title(self, session_id: str, title: str) -> None:
+    def update_session_title(self, user_id: str, session_id: str, title: str) -> None:
         with self._conn.cursor() as cur:
             cur.execute(
-                "UPDATE sessions SET title = %s, updated_at = now() WHERE id = %s",
-                (title, session_id),
+                """
+                UPDATE sessions SET title = %s, updated_at = now()
+                WHERE id = %s AND user_id = %s
+                """,
+                (title, session_id, user_id),
             )
         self._conn.commit()
 
@@ -118,10 +146,13 @@ class PostgresSessionRepository:
             )
         self._conn.commit()
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, user_id: str, session_id: str) -> bool:
         """删除会话行；messages 由外键 ON DELETE CASCADE 一并删除。"""
         with self._conn.cursor() as cur:
-            cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+            cur.execute(
+                "DELETE FROM sessions WHERE id = %s AND user_id = %s",
+                (session_id, user_id),
+            )
             deleted = cur.rowcount > 0
         self._conn.commit()
         return deleted
@@ -156,16 +187,18 @@ class PostgresSessionRepository:
         self._conn.commit()
         return _to_message(row)
 
-    def get_messages(self, session_id: str) -> list[Message]:
+    def get_messages(self, user_id: str, session_id: str) -> list[Message]:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT id, session_id, role, content, created_at, tool_calls, tool_call_id, token_usage
-                FROM messages
-                WHERE session_id = %s
-                ORDER BY id ASC
+                SELECT m.id, m.session_id, m.role, m.content, m.created_at,
+                       m.tool_calls, m.tool_call_id, m.token_usage
+                FROM messages m
+                JOIN sessions s ON s.id = m.session_id
+                WHERE m.session_id = %s AND s.user_id = %s
+                ORDER BY m.id ASC
                 """,
-                (session_id,),
+                (session_id, user_id),
             )
             rows = cur.fetchall()
         return [_to_message(row) for row in rows]

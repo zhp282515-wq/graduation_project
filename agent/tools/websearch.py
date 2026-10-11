@@ -9,6 +9,7 @@ from utils.logger_tool import logger
 
 load_dotenv(override=True)
 from agent.tools.base import BaseTool, ToolError
+from utils.second_tool import fmt_duration
 
 
 class WebSearchTool(BaseTool):
@@ -81,7 +82,7 @@ class WebSearchTool(BaseTool):
             raise ToolError(f"网络搜索请求失败：{exc}") from exc
 
         elapsed = time.perf_counter() - start
-        logger.info(f"[响应] {response.status_code}, 耗时 {elapsed:.2f}s")
+        logger.info(f"[响应] {response.status_code}, 耗时 {fmt_duration(elapsed)}")
 
         if response.status_code != 200:
             raise ToolError(f"网络搜索服务返回 HTTP {response.status_code}")

@@ -34,15 +34,17 @@ def to_image_url(image: str) -> str:
 
 
 def build_query(text: str, images: list[str] | None = None) -> list[dict]:
-    """把文本 + 图片拼成模型内容块。图片放在文本前，与 DashScope 多模态示例一致。"""
-    blocks: list[dict] = []
+
+    blocks: list[dict] = [{"type": "text", "text": text}]
+
     for image in images or []:
         blocks.append({
             "type": "image_url",
-            "image_url": {"url": to_image_url(image)},
+            "image_url": {"url": to_image_url(image)[:30]},
         })
-    blocks.append({"type": "text", "text": text})
     return blocks
 
 if __name__ == '__main__':
-    print(to_image_url("D:\\1oveb\\壁纸\\【哲风壁纸】户外-气质-氛围感.jpg"))
+    from rich import print as rprint
+
+    rprint(build_query(text="你好",images=["D:\\1oveb\\毕业设计\\项目架构图.png"]))

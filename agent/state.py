@@ -27,6 +27,8 @@ class AgentState(MessagesState):
     timeout: NotRequired[int]
     enable_thinking: NotRequired[bool]
     reasoning_effort: NotRequired[str]
+    summary: NotRequired[str]
+    summary_upto: NotRequired[int]
 
 
 class OutputState(MessagesState):

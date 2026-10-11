@@ -22,13 +22,15 @@ def build_graph(
     builder.add_node("tool_node", nodes["tool_node"])
     builder.add_node("fallback_node", nodes["fallback_node"])
     builder.add_node("output_node", nodes["output_node"])
+    builder.add_node("compact_node", nodes["compact_node"])
 
 
     builder.add_edge(START, "input_node")
     builder.add_edge("input_node", "llm_node")
     builder.add_conditional_edges("llm_node", route_after_llm)
     builder.add_edge("tool_node", "llm_node")
-    builder.add_edge("output_node", END)
+    builder.add_edge("output_node", "compact_node")
+    builder.add_edge("compact_node", END)
 
     return builder.compile(
         checkpointer=checkpointer

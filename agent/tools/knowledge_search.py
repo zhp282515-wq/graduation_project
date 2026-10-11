@@ -1,7 +1,10 @@
+import time
 from typing import Any
 
 from agent.tools.base import BaseTool, ToolError
 from knowledge.server import KnowledgeService
+from utils.logger_tool import logger
+from utils.second_tool import fmt_duration
 
 
 class KnowledgeSearchTool(BaseTool):
@@ -42,10 +45,13 @@ class KnowledgeSearchTool(BaseTool):
         if not query:
             raise ToolError("未提供检索内容")
 
+        start = time.perf_counter()
         results = self.service.base_retriever(query)
         if not results:
             return "知识库中没有找到相关内容"
 
+        elapsed = time.perf_counter() - start
+        logger.info(f"[响应] 查询完成, 耗时 {fmt_duration(elapsed)}")
         return "\n\n".join(
             f"[{index}] {self._format_source(result['source'])}\n{result['text']}"
             for index, result in enumerate(results, start=1)

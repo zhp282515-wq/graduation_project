@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv(override=True)
 from rich import print as rprint
+from utils.second_tool import fmt_duration
 
 
 def _content_text(content: Any) -> str:
@@ -498,11 +499,8 @@ class OpenAIProvider(BaseProvider):
             if tool_call_parts
             else "stop"
         )
-        logger.info(
-            "[流式响应] 完成，耗时 %.2fs, finish_reason=%s",
-            elapsed,
-            finish_reason,
-        )
+        logger.info(f"[流式响应] 完成，耗时 {fmt_duration(elapsed)}, finish_reason={finish_reason}",)
+
         yield {
             "type": "done",
             "finish_reason": finish_reason,

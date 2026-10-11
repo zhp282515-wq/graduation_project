@@ -21,6 +21,7 @@ class AgentRuntime:
         checkpointer: BaseCheckpointSaver | None = None,
         default_max_turns: int = 10,
         summary_model: BaseProvider | None = None,
+        context_window: int = 1000000
     ):
         self.default_max_turns = default_max_turns
 
@@ -36,31 +37,39 @@ class AgentRuntime:
             prompts=prompts,
             default_max_turns=default_max_turns,
             summarizer=summarizer,
+            context_window=context_window,
         )
         self.graph = build_graph(nodes, checkpointer=checkpointer)
 
     def stream(
             self,
-            input: AgentInput,
+            query: list[dict[str, Any]],
             *,
             session_id: str,
+            max_turns: int | None = None,
+            enable_thinking: bool = False,
+            reasoning_effort: str = "none",
             cancel_event=None,
     ) -> Iterator[dict[str, Any]]:
-        """流式执行编译后的 LangGraph，并返回 custom 模式事件。"""
-        max_turns = input.get("max_turns", self.default_max_turns)
-        # 每个 turn 最多消耗 llm_node + tool_node 两步；再加 input_node、
-        # output/fallback_node 的固定开销，留 6 步余量。
-        recursion_limit = max_turns * 2 + 6
+        effective_max_turns = max_turns if max_turns is not None else self.default_max_turns
+        recursion_limit = effective_max_turns * 2 + 6
+
+        agent_input: AgentInput = {
+            "query": query,
+            "max_turns": effective_max_turns,
+            "enable_thinking": enable_thinking,
+            "reasoning_effort": reasoning_effort,
+        }
 
         yield from self.graph.stream(
-            input,
+            agent_input,
             config={
                 "configurable": {
                     "thread_id": session_id,
                 },
                 "recursion_limit": recursion_limit,
             },
-            stream_mode="custom",
+            stream_mode="custom"
         )
 
     def delete_thread(self, session_id: str) -> None:

@@ -4,6 +4,7 @@ from agent.tools.base import BaseTool, ToolError
 import requests
 from utils.logger_tool import logger
 import time
+from utils.second_tool import fmt_duration
 
 
 class WeatherTool(BaseTool):
@@ -84,7 +85,7 @@ class WeatherTool(BaseTool):
         weather_text = wmo_codes.get(current["weather_code"], f"未知({current['weather_code']})")
 
         elapsed = time.perf_counter() - start
-        logger.info(f"[响应] {weather_resp.status_code}, 耗时 {elapsed:.2f}s")
+        logger.info(f"[响应] {weather_resp.status_code}, 耗时 {fmt_duration(elapsed)}")
 
         return (
             f"城市：{city_name}，天气：{weather_text}，"

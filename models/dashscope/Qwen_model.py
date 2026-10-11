@@ -10,6 +10,7 @@ import time
 import os
 from dotenv import load_dotenv
 load_dotenv(override=True)
+from utils.second_tool import fmt_duration
 
 
 class ContentInspectionError(RuntimeError):
@@ -336,7 +337,7 @@ class DashScopeProvider(BaseProvider):
                 pending_events.clear()
 
         elapsed = time.perf_counter() - start
-        logger.info(f"[流式响应] 完成，耗时 {elapsed:.2f}s, finish_reason={finish_reason}")
+        logger.info(f"[流式响应] 完成，耗时 {fmt_duration(elapsed)}, finish_reason={finish_reason}")
 
         tool_calls: list[ToolCall] = []
 

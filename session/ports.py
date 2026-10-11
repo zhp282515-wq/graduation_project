@@ -1,4 +1,4 @@
-from typing import Any, Protocol
+from typing import Any, Protocol, Iterator
 
 from session.models import Message, Session
 
@@ -6,17 +6,17 @@ from session.models import Message, Session
 class SessionRepository(Protocol):
     """会话持久化接口。实现可以是 Postgres，也可以是内存/测试替身。"""
 
-    def create_session(self, title: str) -> Session: ...
+    def create_session(self, user_id: str, title: str) -> Session: ...
 
-    def get_session(self, session_id: str) -> Session | None: ...
+    def get_session(self, user_id: str, session_id: str) -> Session | None: ...
 
-    def list_sessions(self) -> list[Session]: ...
+    def list_sessions(self, user_id: str) -> list[Session]: ...
 
-    def update_session_title(self, session_id: str, title: str) -> None: ...
+    def update_session_title(self, user_id: str, session_id: str, title: str) -> None: ...
 
-    def touch_session(self, session_id: str) -> None: ...
+    def touch_session(self, user_id: str, session_id: str) -> None: ...
 
-    def delete_session(self, session_id: str) -> bool: ...
+    def delete_session(self, user_id: str, session_id: str) -> bool: ...
 
     def add_message(
         self,
@@ -29,4 +29,25 @@ class SessionRepository(Protocol):
         token_usage: dict[str, Any] | None = None,
     ) -> Message: ...
 
-    def get_messages(self, session_id: str) -> list[Message]: ...
+    def get_messages(self, user_id: str, session_id: str) -> list[Message]: ...
+
+
+class AgentPort(Protocol):
+    """业务层看到的 Agent 能力。实现是 AgentRuntime，但这里不依赖它。
+
+    入参 query 是已组装好的模型内容块，由 API/适配层负责拼装，
+    业务层不关心里面有几张图、文本怎么拼。
+    """
+
+    def stream(
+        self,
+        query: list[dict[str, Any]],
+        *,
+        session_id: str,
+        max_turns: int | None = None,
+        enable_thinking: bool = False,
+        reasoning_effort: str = "none",
+        cancel_event: Any = None,
+    ) -> Iterator[dict[str, Any]]: ...
+
+    def delete_thread(self, session_id: str) -> None: ...

@@ -10,6 +10,7 @@ DEFAULT_SESSION_TITLE = "新会话"
 @dataclass
 class Session:
     id: str
+    user_id: str
     title: str
     status: SessionStatus
     created_at: datetime
