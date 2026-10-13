@@ -1,7 +1,6 @@
-from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-from agent.tools.base import ToolError
+from agent.tools.base import ToolError, ToolResult
 from agent.tools.registry import ToolRegistry
 from models.base import ToolCall
 from utils.logger_tool import logger
@@ -14,13 +13,6 @@ _TYPE_CHECKS = {
     "object": lambda v: isinstance(v, dict),
     "array": lambda v: isinstance(v, list),
 }
-
-
-@dataclass(frozen=True)
-class ToolResult:
-    content: str
-    status: Literal["completed", "error"]
-
 
 def _find_argument_problem(schema: dict[str, Any], arguments: dict[str, Any]) -> str | None:
     props = schema.get("properties", {})
@@ -62,7 +54,10 @@ def execute_tool(registry: ToolRegistry, tool_call: ToolCall) -> ToolResult:
         return ToolResult(content=f"工具 {tool_call.name} 的参数不符合要求：{problem}", status="error")
 
     try:
-        return ToolResult(content=str(tool.run(**tool_call.arguments)), status="completed")
+        output = tool.run(**tool_call.arguments)
+        if isinstance(output, ToolResult):
+            return output
+        return ToolResult(content=str(output))
     except ToolError as exc:
         logger.warning("工具 %s 执行失败：%s", tool_call.name, exc)
         return ToolResult(content=str(exc), status="error")

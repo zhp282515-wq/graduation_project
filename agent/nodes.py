@@ -6,18 +6,24 @@ from models.base import BaseProvider, ChatMessage, ChatResponse
 from agent.state import AgentState, OutputState
 from agent.tools.registry import ToolRegistry
 from agent.tools.executor import execute_tool
-from models.dashscope.Qwen_model import DashScopeProvider
-from models.openai.ChatGPT import OpenAIProvider
+# from models.dashscope.Qwen_model import DashScopeProvider
+# from models.openai.ChatGPT import OpenAIProvider
 from .summarizer import Summarizer
 from utils.logger_tool import logger
 from datetime import datetime
-from utils.second_tool import fmt_duration
+from concurrent.futures import ThreadPoolExecutor
 
 _COMPACT_TRIGGER = 0.6
 _KEEP_RECENT_TURNS = 3
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
+
+def _add_total(prev: int | None, usage: dict[str, Any] | None) -> int:
+    """累加本轮 token 消耗。只取 total_tokens —— 它已含 prompt + completion，
+    且是整数，顺带避开 prompt_tokens_details 这类嵌套结构。"""
+    value = (usage or {}).get("total_tokens")
+    return (prev or 0) + (value if isinstance(value, int) else 0)
 
 def _dangling_results(messages: list[ChatMessage]) -> list[ChatMessage]:
     """补齐历史里“有 tool_calls、没 tool 结果”的缺口。
@@ -88,8 +94,9 @@ def create_nodes(
             "max_turns": state.get("max_turns", default_max_turns),
             "turn_count": 0,
             "timeout": state.get("timeout", 60),
-            "enable_thinking": state.get("enable_thinking", False),
-            "reasoning_effort": state.get("reasoning_effort", "none"),
+            "reasoning": state.get("reasoning"),
+            "started_at": time.time(),
+            "total_tokens": 0,
         }
 
     def llm_node(state: AgentState) -> AgentState:
@@ -127,22 +134,8 @@ def create_nodes(
         stream_kwargs = {
             "messages": messages,
             "tools": registry.get_schemas(),
+            **model.reasoning_kwargs(state.get("reasoning")),
         }
-
-        if isinstance(model, DashScopeProvider):
-            stream_kwargs["enable_thinking"] = state.get(
-                "enable_thinking", False
-            )
-
-        elif isinstance(model, OpenAIProvider):
-            stream_kwargs["reasoning_effort"] = state.get(
-                "reasoning_effort", "none"
-            )
-
-        else:
-            raise TypeError(
-                f"不支持的模型 Provider: {type(model).__name__}"
-            )
 
         events = model.stream(**stream_kwargs)
 
@@ -201,13 +194,14 @@ def create_nodes(
             "messages": [assistant_message],
             "last_response": response,
             "turn_count": state.get("turn_count", 0) + 1,
+            "total_tokens": _add_total(state.get("total_tokens"), response.token_usage),  # ← 新增
         }
 
     def tool_node(state: AgentState) -> AgentState:
         writer = get_stream_writer()
-        tool_messages = []
+        tool_calls = state["last_response"].tool_calls
 
-        for tool_call in state["last_response"].tool_calls:
+        def run_one(tool_call):
             writer({
                 "type": "tool_started",
                 "name": tool_call.name,
@@ -221,16 +215,20 @@ def create_nodes(
                 "name": tool_call.name,
                 "status": outcome.status,
                 "tool_call_id": tool_call.id,
-                "elapsed": fmt_duration(elapsed),
+                "elapsed_ms": int(elapsed * 1000),
+                "sources": outcome.sources,
             })
-
-            tool_messages.append(
-                ChatMessage(
-                    role="tool",
-                    content=[{"type": "text", "text": outcome.content}],
-                    tool_call_id=tool_call.id,
-                )
+            return ChatMessage(
+                role="tool",
+                content=[{"type": "text", "text": outcome.content}],
+                tool_call_id=tool_call.id,
             )
+
+        if len(tool_calls) <= 1:
+            tool_messages = [run_one(tc) for tc in tool_calls]
+        else:
+            with ThreadPoolExecutor(max_workers=len(tool_calls)) as pool:
+                tool_messages = list(pool.map(run_one, tool_calls))
 
         return {
             "messages": tool_messages
@@ -284,6 +282,7 @@ def create_nodes(
             token_usage=token_usage,
         )
 
+        total_tokens = _add_total(state.get("total_tokens"), token_usage)
         writer({
             "type": "done",
             "final_answer": {
@@ -291,6 +290,10 @@ def create_nodes(
                 "reasoning": final_answer.reasoning,
                 "finish_reason": final_answer.finish_reason,
                 "token_usage": final_answer.token_usage,
+                "total_tokens": total_tokens,
+                "elapsed_ms": int(
+                    (time.time() - state.get("started_at", time.time())) * 1000
+                ),
             },
         })
 
@@ -312,7 +315,11 @@ def create_nodes(
                 "content": response.content,
                 "reasoning": response.reasoning,
                 "finish_reason": response.finish_reason,
-                "token_usage": response.token_usage,
+                "token_usage": response.token_usage,                    # 最后一次调用（保留）
+                "total_tokens": state.get("total_tokens", 0),           # ← 本轮累计
+                "elapsed_ms": int(
+                    (time.time() - state.get("started_at", time.time())) * 1000
+                ),                                                      # ← 整轮耗时
             },
         })
 

@@ -40,6 +40,12 @@ class ChatResponse(BaseModel):
 class BaseProvider(ABC):
 
     @abstractmethod
+    def reasoning_kwargs(self, value: Any = None) -> dict[str, Any]:
+        """把调用方给的推理设置翻译成本 Provider stream() 的参数。
+        value 对本层是不透明值，None 表示"用本 Provider 的默认"。"""
+        pass
+
+    @abstractmethod
     def invoke(self, messages: list[ChatMessage], tools: list[dict[str, Any]] | None = None, **kwargs) -> ChatResponse:
         pass
 

@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 from utils.logger_tool import logger
 
 load_dotenv(override=True)
-from agent.tools.base import BaseTool, ToolError
+from agent.tools.base import BaseTool, ToolError, ToolResult
 from utils.second_tool import fmt_duration
 
+_MAX_SNIPPET_CHARS = 500
 
 class WebSearchTool(BaseTool):
     def __init__(self):
@@ -53,7 +54,7 @@ class WebSearchTool(BaseTool):
         }
         return schema
 
-    def run(self, **kwargs) -> str:
+    def run(self, **kwargs) -> ToolResult:
 
         query = kwargs.get("query")
 
@@ -91,10 +92,25 @@ class WebSearchTool(BaseTool):
         if body.get("success") is False:
             raise ToolError(f"网络搜索失败：{body.get('error', '未知错误')}")
 
-        data = body.get("data")
-        if not data:
-            return "未搜索到相关结果"
-        return str(data)
+        # Firecrawl v2 实测返回 {"web": [...]}，每项含 url / title / description / position
+        data = body.get("data") or {}
+        items = data.get("web") or []
+        if not items:
+            return ToolResult(content="未搜索到相关结果")
+
+        lines: list[str] = []
+        sources: list[dict[str, Any]] = []
+        for index, item in enumerate(items, start=1):
+            title = item.get("title") or "无标题"
+            url = item.get("url") or ""
+            snippet = (item.get("description") or "").strip()
+            if len(snippet) > _MAX_SNIPPET_CHARS:
+                snippet = snippet[:_MAX_SNIPPET_CHARS] + "…"
+
+            lines.append(f"[{index}] {title}\n{url}\n{snippet}")
+            sources.append({"index": index, "title": title, "url": url})
+
+        return ToolResult(content="\n\n".join(lines), sources=sources)
 
 if __name__ == '__main__':
     tool = WebSearchTool()

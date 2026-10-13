@@ -5,6 +5,7 @@ from typing import Any
 from session.models import DEFAULT_SESSION_TITLE, Message, Session
 from session.ports import AgentPort, SessionRepository
 from utils.logger_tool import logger
+from datetime import datetime
 
 _AUTOTITLE_MAX_LEN = 30
 
@@ -54,8 +55,7 @@ class SessionService:
         text: str,
         images: list[str] | None = None,
         max_turns: int | None = None,
-        enable_thinking: bool = False,
-        reasoning_effort: str = "none",
+        reasoning: Any | None = None,
     ) -> Iterator[dict[str, Any]]:
         """校验 + 落库在调用时立即执行；流式部分由内部生成器负责。
 
@@ -76,8 +76,7 @@ class SessionService:
             session_id,
             query,
             max_turns=max_turns,
-            enable_thinking=enable_thinking,
-            reasoning_effort=reasoning_effort,
+            reasoning=reasoning,
         )
 
     def _stream(
@@ -86,26 +85,41 @@ class SessionService:
         query: list[dict[str, Any]],
         *,
         max_turns: int | None,
-        enable_thinking: bool,
-        reasoning_effort: str,
+        reasoning: Any | None = None,
     ) -> Iterator[dict[str, Any]]:
         started = time.perf_counter()
         final_content = ""
         token_usage: dict[str, Any] | None = None
+
+        yield {
+            "type": "run_started",
+            "session_id": session_id,
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+        }
 
         try:
             for event in self._runtime.stream(
                 query,
                 session_id=session_id,
                 max_turns=max_turns,
-                enable_thinking=enable_thinking,
-                reasoning_effort=reasoning_effort,
+                reasoning=reasoning,
             ):
                 if event.get("type") == "done":
                     final = event.get("final_answer") or {}
                     final_content = final.get("content", "") or ""
-                    token_usage = final.get("token_usage")
+                    token_usage = final.get("total_tokens")
                 yield event
+        except Exception as exc:
+            # 图抛异常时，调用方还没收到 done，必须补一个终止事件，
+            # 否则前端永远卡在"运行中"
+            logger.exception("会话 %s 本轮执行失败", session_id)
+
+            yield {
+                "type": "run_failed",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            }
         finally:
             # 生成器被提前关闭（调用方 break）时也会执行；此时 final_content 为空，
             # 不落库，避免写入半截回答。

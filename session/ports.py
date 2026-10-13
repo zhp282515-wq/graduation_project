@@ -45,8 +45,7 @@ class AgentPort(Protocol):
         *,
         session_id: str,
         max_turns: int | None = None,
-        enable_thinking: bool = False,
-        reasoning_effort: str = "none",
+        reasoning: Any | None = None,
         cancel_event: Any = None,
     ) -> Iterator[dict[str, Any]]: ...
 

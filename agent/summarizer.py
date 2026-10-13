@@ -16,13 +16,11 @@ class Summarizer:
         model: BaseProvider,
         *,
         system_prompt: str | None = None,
-        reasoning_effort: str = "low",
-        enable_thinking: bool = False,
+        reasoning: Any = None,
     ):
         self.model = model
         self.system_prompt = system_prompt
-        self.reasoning_effort = reasoning_effort
-        self.enable_thinking = enable_thinking
+        self.reasoning = reasoning
 
     def run(
         self,
@@ -44,10 +42,7 @@ class Summarizer:
         ))
 
         stream_kwargs: dict[str, Any] = {"messages": call_messages, "tools": []}
-        if isinstance(self.model, DashScopeProvider):
-            stream_kwargs["enable_thinking"] = self.enable_thinking
-        elif isinstance(self.model, OpenAIProvider):
-            stream_kwargs["reasoning_effort"] = self.reasoning_effort
+        stream_kwargs.update(self.model.reasoning_kwargs(self.reasoning))
 
         parts: list[str] = []
         token_usage: dict[str, Any] | None = None

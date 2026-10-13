@@ -9,8 +9,7 @@ class AgentInput(TypedDict):
     query: list[dict[str, Any]]
     max_turns: NotRequired[int]
     timeout: NotRequired[int]
-    enable_thinking: NotRequired[bool]
-    reasoning_effort: NotRequired[str]
+    reasoning: NotRequired[Any]        # 值域由所配 Provider 决定：Qwen 是 bool，OpenAI 是档位字符串
 
 
 class MessagesState(TypedDict):
@@ -25,10 +24,11 @@ class AgentState(MessagesState):
     max_turns: NotRequired[int]
     turn_count: NotRequired[int]
     timeout: NotRequired[int]
-    enable_thinking: NotRequired[bool]
-    reasoning_effort: NotRequired[str]
+    reasoning: NotRequired[Any]
     summary: NotRequired[str]
     summary_upto: NotRequired[int]
+    total_tokens: NotRequired[int]     # ← 本轮累计消耗
+    started_at: NotRequired[float]     # ← 本轮起始时间
 
 
 class OutputState(MessagesState):

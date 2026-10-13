@@ -107,6 +107,9 @@ class OpenAIProvider(BaseProvider):
         self.api_key = key
         self.base_url = base_url.rstrip("/")
 
+    def reasoning_kwargs(self, value: Any = None) -> dict[str, Any]:
+        return {"reasoning_effort": "none" if value is None else str(value)}
+
     def invoke(
         self,
         messages: list[ChatMessage],

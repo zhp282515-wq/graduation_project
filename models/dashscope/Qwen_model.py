@@ -58,6 +58,9 @@ class DashScopeProvider(BaseProvider):
         self.api_key = key
         self.base_url = base_url.rstrip("/")
 
+    def reasoning_kwargs(self, value: Any = None) -> dict[str, Any]:
+        return {"enable_thinking": False if value is None else bool(value)}
+
     def invoke(
         self,
         messages: list[ChatMessage],
@@ -379,12 +382,12 @@ if __name__ == '__main__':
     from agent.tools.weather import WeatherTool
     from rich import print as rprint
 
-    model = DashScopeProvider(model="qwen3.7-flash")
+    model = DashScopeProvider(model="qwen3.8-flash")
     message = [
         ChatMessage(
             role="user",
             content=[
-                {"type": "text", "text": "帮我查一查今天南昌的天气"}
+                {"type": "text", "text": "我刚问你什么"}
             ]
         )
     ]
