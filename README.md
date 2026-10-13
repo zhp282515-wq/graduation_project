@@ -17,7 +17,7 @@
 
 | 类别 | 选型 |
 | --- | --- |
-| Agent 编排 | LangGraph、LangChain |
+| Agent 编排 | LangGraph |
 | 模型 | DashScope（Qwen）、OpenAI |
 | 会话存储 | PostgreSQL 16 + langgraph-checkpoint-postgres |
 | 向量库 | Milvus 2.5（etcd / MinIO / Attu） |

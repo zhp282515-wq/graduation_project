@@ -40,7 +40,7 @@ def build_query(text: str, images: list[str] | None = None) -> list[dict]:
     for image in images or []:
         blocks.append({
             "type": "image_url",
-            "image_url": {"url": to_image_url(image)[:30]},
+            "image_url": {"url": to_image_url(image)},
         })
     return blocks
 
