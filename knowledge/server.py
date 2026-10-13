@@ -6,10 +6,28 @@ from knowledge.chunking import chunk_content_list
 from knowledge.mineru_parser import MineruParser
 from milvus.client import MilvusVectorStore
 from models.dashscope.embedding import DashScopeEmbedding
+from models.dashscope.reranker import DashScopeReranker
 from utils.logger_tool import logger
 
 _SEARCH_FIELDS = ("text", "file_md5", "file_name", "section_path", "block_type", "page")
 
+# 三个 retriever 的召回数；重排后最终返回条数。
+_RECALL_TOP_K = 20
+_RERANK_TOP_N = 5
+
+# 重排分数的截断阈值。PoC 实测：相关文档 0.85~0.89，无关 0.045~0.135，
+# 中间断层干净，取 0.3 可挡掉 BM25 单字虚命中。这是"回答有没有依据"的关口。
+_RERANK_MIN_SCORE = 0.3
+
+# RRF 融合分数下限：重排前先滤掉明显无关的候选，省重排的 token 与延迟。
+#
+# 算式（rrf_k=60，每路候选数 = top_k * 4）：单路排第 r 名贡献 1/(60+r)；
+# 0.01 相当于"单路至少进前 40 名"才保留。
+#
+# 两个坑：
+# 1. 与 rrf_k 及 store.hybrid_search 的 candidate_limit 倍率耦合，改其一要重校；
+# 2. RRF 是排名派生分，无法表达"一条都没命中"——挡无依据回答靠 _RERANK_MIN_SCORE。
+_FUSION_MIN_SCORE = 0.01
 
 class KnowledgeService:
 
@@ -18,6 +36,7 @@ class KnowledgeService:
         self.store.ensure_collection()
         self.embedder = DashScopeEmbedding()
         self.parser = MineruParser()
+        self.reranker = DashScopeReranker()
 
     def _get_md5_hex(self, file_path: str | Path) -> str:
         """计算并返回当前文档内容的 md5 十六进制串(不对库做判断)。"""
@@ -45,11 +64,20 @@ class KnowledgeService:
         """
         return self.store.delete_by_md5(file_md5) > 0
 
-    def load_document(self, file_path: str | Path) -> dict[str, Any]:
-        """
-        实现文档的解析、分片、入库
-        文档入库时先进行去重操作，若file_md5相同，则跳过
-        若是新文档则生成file_md5
+    def load_document(
+        self,
+        file_path: str | Path,
+        *,
+        content_list: list[dict[str, Any]] | None = None,
+        title: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """文档的解析、分片、入库。md5 相同则跳过。
+
+        content_list 已给出时跳过解析（用于已解析好的产物）；
+        否则调 MinerU 解析 file_path。
+        title 覆盖块前缀用的标题（默认取文件名主干）。
+        metadata 是整篇共用的元数据，写进动态字段；本地文档不传即为空。
         """
         path = Path(file_path)
         file_md5 = self._get_md5_hex(path)
@@ -57,23 +85,26 @@ class KnowledgeService:
             logger.info("文档已入库，跳过：%s (file_md5=%s)", path.name, file_md5)
             return {"file_md5": file_md5, "inserted": 0, "skipped": True}
 
-        doc = self.parser.parse_file(path)
-        chunks = chunk_content_list(doc.content_list, doc_title=path.stem)
+        if content_list is None:
+            doc = self.parser.parse_file(path)
+            content_list = doc.content_list
+
+        chunks = chunk_content_list(content_list, doc_title=title or path.stem)
         texts = [chunk.text for chunk in chunks]
         vectors = self.embedder.embed_texts(texts)
         metadatas = [
             {"section_path": c.section_path, "block_type": c.block_type, "page": c.page}
             for c in chunks
         ]
-        # doc_id 与 file_md5 取同一值，按 md5 去重/删除直接复用 client 的 doc 级接口
         inserted = self.store.insert_chunks(
             texts,
             vectors,
             file_md5=file_md5,
-            file_name=path.name,
+            file_name=title or path.name,
             file_type=path.suffix.lower().lstrip("."),
             file_size=path.stat().st_size,
             metadatas=metadatas,
+            doc_metadata=metadata,
         )
         self.save_md5_hex(file_md5)
         return {"file_md5": file_md5, "inserted": inserted, "skipped": False}
@@ -113,34 +144,130 @@ class KnowledgeService:
         """根据file_md5删除库中对应文档"""
         return self.del_md5_hex(file_md5)
 
-    def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        return self.store.search(
+    @staticmethod
+    def _with_source(hit: dict[str, Any]) -> dict[str, Any]:
+        """把一条原始命中转成「正文 + 分数 + 来源」。
+
+        三个 retriever 共用这个出口，输出结构一致 —— 评测脚本喂同一套解析。
+        """
+        return {
+            "text": hit["text"],
+            "score": hit["score"],
+            "source": {
+                "file_name": hit.get("file_name"),
+                "file_md5": hit.get("file_md5"),
+                "section_path": hit.get("section_path"),
+                "page": hit.get("page"),
+            },
+        }
+
+    def _dense_search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        min_score: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """纯稠密检索的原始命中。min_score 默认 0（不过滤）。
+
+        余弦分与 RRF 分量纲不同，别把它改成 _FUSION_MIN_SCORE —— 那会误杀
+        BM25 靠关键词捞回来的块。要按余弦过滤得单独校准。
+        """
+        hits = self.store.search(
             self.embedder.embed_query(query),
             limit=top_k,
             output_fields=_SEARCH_FIELDS,
         )
+        if min_score <= 0:
+            return hits
+        return [hit for hit in hits if hit["score"] >= min_score]
 
-    def base_retriever(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """包装 search，每条结果附带来源（文件名、页码、章节路径）。"""
-        hits = self.search(query, top_k=top_k)
-        return [
-            {
-                "text": hit["text"],
-                "score": hit["score"],
-                "source": {
-                    "file_name": hit.get("file_name"),
-                    "file_md5": hit.get("file_md5"),
-                    "section_path": hit.get("section_path"),
-                    "page": hit.get("page"),
-                },
-            }
-            for hit in hits
-        ]
+    def _hybrid_search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        min_score: float = _FUSION_MIN_SCORE,
+    ) -> list[dict[str, Any]]:
+        """稠密 + BM25 混合检索（RRF 融合）+ 融合分下限过滤，返回原始命中。
+
+        私有原语：mix_retriever 包装它，rerank_retriever 拿它当重排输入池。
+        不对外暴露 —— service.search 会和 store.search（纯稠密）同名异义。
+
+        这里不传 candidate_limit，用 store 默认的 limit*4：召回 20 条时每路
+        各捞 80 条再融合，RRF 才有腾挪空间。
+        """
+        hits = self.store.hybrid_search(
+            query,
+            self.embedder.embed_query(query),
+            limit=top_k,
+            output_fields=_SEARCH_FIELDS,
+        )
+        if min_score <= 0:
+            return hits
+
+        kept = [hit for hit in hits if hit["score"] >= min_score]
+        if len(kept) < len(hits):
+            logger.info(
+                "RRF 阈值 %.4f 过滤 %d/%d 条低分候选",
+                min_score, len(hits) - len(kept), len(hits),
+            )
+        return kept
+
+    def base_retriever(self, query: str, top_k: int = _RECALL_TOP_K) -> list[dict[str, Any]]:
+        """① 纯稠密向量检索。对比实验的基线。"""
+        return [self._with_source(hit) for hit in self._dense_search(query, top_k)]
+
+    def mix_retriever(self, query: str, top_k: int = _RECALL_TOP_K) -> list[dict[str, Any]]:
+        """② 混合检索（稠密 + BM25，RRF 融合），不重排。实验一的对照组。"""
+        return [self._with_source(hit) for hit in self._hybrid_search(query, top_k)]
+
+    def rerank_retriever(
+        self,
+        query: str,
+        top_k: int = _RECALL_TOP_K,
+        top_n: int = _RERANK_TOP_N,
+    ) -> list[dict[str, Any]]:
+        """③ 混合检索 → 重排 → 阈值截断。生产链路用这个。
+
+        先召回 top_k(20) 个候选再精排出 top_n(5)：只对最终条数重排等于没排。
+        重排失败时退回混合检索顺序，不让整条链路挂掉。
+        """
+        candidates = self._hybrid_search(query, top_k)
+        if not candidates:
+            return []
+
+        try:
+            ranked = self.reranker.rerank(
+                query,
+                [hit["text"] for hit in candidates],
+                top_n=top_n,
+            )
+        except Exception:
+            logger.exception("重排失败，退回混合检索顺序")
+            return [self._with_source(hit) for hit in candidates[:top_n]]
+
+        hits: list[dict[str, Any]] = []
+        for item in ranked:
+            index = item.get("index")
+            score = item.get("score")
+            if not isinstance(index, int) or not 0 <= index < len(candidates):
+                logger.warning("重排返回越界下标 %s，已跳过", index)
+                continue
+            if isinstance(score, float) and score < _RERANK_MIN_SCORE:
+                continue
+            hit = dict(candidates[index])      # 浅拷贝：不污染候选列表
+            hit["score"] = score               # 用重排分覆盖 RRF 分
+            hits.append(self._with_source(hit))
+        return hits
 
 if __name__ == '__main__':
 
-    server = KnowledgeService()
-    server.load_document("../data/暑期社会实践志愿服务.pdf")
+    from pathlib import Path
+    from rich import print as rprint
+    service = KnowledgeService()
+    rprint(service.list_documents())
+
     # print(server.del_document("aa66ee24152e9734259564daebc7c949"))
     # from rich import print as rprint
     # rprint(server.base_retriever("名单公布"))

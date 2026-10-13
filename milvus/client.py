@@ -10,7 +10,12 @@ from typing import Any, Sequence
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from pymilvus import DataType, MilvusClient
+from pymilvus import (DataType,
+                      MilvusClient,
+                      AnnSearchRequest,
+                      Function,
+                      FunctionType,
+                      RRFRanker)
 
 from utils.logger_tool import logger
 
@@ -22,6 +27,9 @@ DEFAULT_URI = "http://localhost:19530"
 # Milvus VARCHAR 单字段上限为 65535。
 _TEXT_MAX_LEN = 65535
 _ID_MAX_LEN = 64
+
+# BM25 稀疏向量字段名。schema 里声明为 sparse，由 text_bm25 函数从 text 自动生成。
+_SPARSE_FIELD = "sparse"
 
 
 class MilvusVectorStore:
@@ -46,8 +54,16 @@ class MilvusVectorStore:
         )
 
     def ensure_collection(self) -> None:
-        """集合不存在则创建（含索引并加载）；已存在则确保已加载。幂等，可重复调用。"""
+        """集合不存在则创建（含索引并加载）；已存在则确保已加载。幂等。"""
         if self.client.has_collection(self.collection):
+            # RAG-4 前的旧集合没有稀疏字段，混合检索会失败。不自动重建
+            # （会丢数据），只报错提示手工重建。
+            if not self._has_sparse_field():
+                logger.error(
+                    "集合 %s 是旧 schema（无 %s 字段），混合检索不可用；"
+                    "请重建集合后重新入库",
+                    self.collection, _SPARSE_FIELD,
+                )
             self.client.load_collection(self.collection)
             return
 
@@ -58,8 +74,25 @@ class MilvusVectorStore:
         schema.add_field("file_type", DataType.VARCHAR, max_length=32)
         schema.add_field("file_size", DataType.INT64)
         schema.add_field("vector", DataType.FLOAT_VECTOR, dim=self.dimension)
-        schema.add_field("text", DataType.VARCHAR, max_length=_TEXT_MAX_LEN)
+        schema.add_field(
+            "text",
+            DataType.VARCHAR,
+            max_length=_TEXT_MAX_LEN,
+            enable_analyzer=True,
+            analyzer_params={"type": "chinese"},   # PoC 已验证可用
+        )
+        schema.add_field("sparse", DataType.SPARSE_FLOAT_VECTOR)
         schema.add_field("chunk_index", DataType.INT64)
+
+        # BM25 函数：Milvus 从 text 自动生成 sparse，写入侧不用自己算稀疏向量
+        schema.add_function(
+            Function(
+                name="text_bm25",
+                function_type=FunctionType.BM25,
+                input_field_names=["text"],
+                output_field_names=["sparse"],
+            )
+        )
 
         index_params = MilvusClient.prepare_index_params()
         index_params.add_index(
@@ -68,13 +101,72 @@ class MilvusVectorStore:
             metric_type="COSINE",
             params={"M": 16, "efConstruction": 200},
         )
+        index_params.add_index(
+            field_name=_SPARSE_FIELD,
+            index_type="SPARSE_INVERTED_INDEX",
+            metric_type="BM25",
+        )
 
         self.client.create_collection(
             collection_name=self.collection,
             schema=schema,
             index_params=index_params,
         )
-        logger.info("已创建 Milvus 集合 %s (dim=%d)", self.collection, self.dimension)
+        logger.info("已创建 Milvus 集合 %s (dim=%d, BM25)", self.collection, self.dimension)
+
+    def _has_sparse_field(self) -> bool:
+        desc = self.client.describe_collection(self.collection)
+        return any(f.get("name") == _SPARSE_FIELD for f in desc.get("fields", []))
+
+    def hybrid_search(
+        self,
+        query_text: str,
+        query_vector: Sequence[float],
+        *,
+        limit: int = 5,
+        candidate_limit: int | None = None,
+        rrf_k: int = 60,
+        expression: str = "",
+        output_fields: Sequence[str] = ("text", "chunk_index"),
+    ) -> list[dict[str, Any]]:
+        """稠密 + BM25 混合检索，RRF 融合，返回 top-limit。
+
+        candidate_limit 是每个单路召回的候选数（大于 limit 才有融合意义）；
+        RRF 只用排名不用分数，故两路分值尺度不同也无需归一化。
+        """
+        per_route = candidate_limit or limit * 4
+
+        dense_req = AnnSearchRequest(
+            data=[list(query_vector)],
+            anns_field="vector",
+            param={"metric_type": "COSINE", "params": {"ef": 64}},
+            limit=per_route,
+            expr=expression,
+        )
+        sparse_req = AnnSearchRequest(
+            data=[query_text],                       # BM25 直接吃原始文本
+            anns_field=_SPARSE_FIELD,
+            param={"metric_type": "BM25"},
+            limit=per_route,
+            expr=expression,
+        )
+
+        results = self.client.hybrid_search(
+            collection_name=self.collection,
+            reqs=[dense_req, sparse_req],
+            ranker=RRFRanker(rrf_k),
+            limit=limit,
+            output_fields=list(output_fields),
+        )
+
+        hits: list[dict[str, Any]] = []
+        for hit in results[0]:
+            row: dict[str, Any] = {"id": hit.get("id"), "score": hit.get("distance")}
+            row.update(hit.get("entity", {}))
+            hits.append(row)
+
+        logger.info("混合检索到 %d 条 (limit=%d, 每路 %d)", len(hits), limit, per_route)
+        return hits
 
     def drop_collection(self) -> None:
         if self.client.has_collection(self.collection):
@@ -91,6 +183,7 @@ class MilvusVectorStore:
         file_type: str,
         file_size: int,
         metadatas: Sequence[dict[str, Any]] | None = None,
+        doc_metadata: dict[str, Any] | None = None
     ) -> int:
         """写入一批知识块。texts 与 vectors 必须一一对应。"""
         if len(texts) != len(vectors):
@@ -110,8 +203,9 @@ class MilvusVectorStore:
                 "text": text,
                 "chunk_index": index,
             }
+            if doc_metadata:
+                row.update(doc_metadata)
             if metadatas is not None:
-                # 额外字段进动态字段，不占 schema。
                 row.update(metadatas[index])
             rows.append(row)
 
@@ -178,6 +272,7 @@ class MilvusVectorStore:
         results = self.client.search(
             collection_name=self.collection,
             data=[list(query_vector)],
+            anns_field="vector",
             limit=limit,
             filter=expression,
             output_fields=list(output_fields),
