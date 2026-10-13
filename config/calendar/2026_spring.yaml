@@ -1,0 +1,28 @@
+academic_year: "2025-2026"
+term: spring              # spring | fall
+term_start: 2026-03-02    # 第 1 周周一 = 正式上课日（脚本会校验必须是周一）
+term_end: 2026-07-12
+source: 江西师范大学校历表（2026年春季学期）
+
+# 网格锚点，可选。用来反向校验 term_start 填错没有
+anchors:
+  - {date: 2026-03-02, week: 1}
+  - {date: 2026-04-27, week: 9}
+
+events:
+  - {type: staff_report,   name: 行政管理人员上班, start: 2026-03-01,
+     audience: staff, note: 正月十三}
+  - {type: registration,   name: 学生报到注册,     start: 2026-03-01}
+  - {type: class_start,    name: 正式上课,         start: 2026-03-02}
+  - {type: holiday,        name: 清明节放假,       start: 2026-04-04, end: 2026-04-06}
+  - {type: holiday,        name: 劳动节放假,       start: 2026-05-01, end: 2026-05-05}
+  - {type: makeup_class,   name: 劳动节补课,       start: 2026-05-09, makeup_weekday: 1,
+     note: 补周一的课}
+  - {type: midterm_exam,   name: 期中考试,         start: 2026-05-06, end: 2026-05-07,
+     audience: undergrad, note: 本科生停课，研究生照常上课}
+  - {type: holiday,        name: 端午节放假,       start: 2026-06-19, end: 2026-06-20,
+     note: 原说明「21日正常上课」，未写明补周几，如需按补课处理请补 makeup_weekday}
+  - {type: makeup_class,   name: 补周五的课,       start: 2026-06-29, makeup_weekday: 5}
+  - {type: exam_review,    name: 停课复习,         start: 2026-06-30, end: 2026-07-01}
+  - {type: final_exam,     name: 期末考试,         start: 2026-07-02, end: 2026-07-10}
+  - {type: vacation_start, name: 开始放暑假,       start: 2026-07-13}

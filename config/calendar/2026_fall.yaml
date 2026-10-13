@@ -1,0 +1,30 @@
+academic_year: "2026-2027"
+term: fall                # spring | fall
+term_start: 2026-08-31    # 第 1 周周一 = 正式上课日（脚本会校验必须是周一）
+term_end: 2027-01-17
+source: 江西师范大学校历表（2026年秋季学期）
+
+# 网格锚点，可选。用来反向校验 term_start 填错没有
+anchors:
+  - {date: 2026-08-31, week: 1}
+  - {date: 2026-10-26, week: 9}
+
+events:
+  - {type: exam_makeup,  name: 补缓考,       start: 2026-08-28, end: 2026-08-30,
+     note: 行政管理人员8月30日开始上班}
+  - {type: registration, name: 学生报到注册, start: 2026-08-30}
+  - {type: class_start,  name: 正式上课,     start: 2026-08-31, note: 新生报到时间另行通知}
+  - {type: holiday,      name: 中秋节放假,   start: 2026-09-25, end: 2026-09-27,
+     note: 9月20日正常上课}
+  - {type: holiday,      name: 国庆节放假,   start: 2026-10-01, end: 2026-10-07}
+  - {type: makeup_class, name: 国庆补课,     start: 2026-10-10, makeup_weekday: 5,
+     note: 补周五的课}
+  - {type: sports_meet,  name: 校运会,       start: 2026-10-22, end: 2026-10-24,
+     tentative: true, note: 暂定，遇雨顺延}
+  - {type: midterm_exam, name: 期中考试,     start: 2026-11-02, end: 2026-11-03,
+     audience: undergrad, note: 本科生停课，研究生照常上课}
+  - {type: makeup_class, name: 补周五的课,   start: 2026-12-30, makeup_weekday: 5}
+  - {type: holiday,      name: 元旦放假,     start: 2027-01-01, end: 2027-01-03}
+  - {type: exam_review,  name: 停课复习迎考, start: 2027-01-04, end: 2027-01-05}
+  - {type: final_exam,   name: 期末考试,     start: 2027-01-06, end: 2027-01-15}
+  - {type: vacation_start, name: 开始放寒假, start: 2027-01-18}
