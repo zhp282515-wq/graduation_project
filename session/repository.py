@@ -5,7 +5,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from session.models import Message, Session
+from session.models import Memory, Message, Session
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -29,6 +29,17 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id, id);
+
+CREATE TABLE IF NOT EXISTS memories (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    category    TEXT NOT NULL DEFAULT 'fact',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_memories_user ON memories (user_id, updated_at DESC);
 """
 
 # 迁移单独放：必须在建索引之前跑，且不能带 NOT NULL DEFAULT
@@ -61,6 +72,17 @@ def _to_message(row: dict[str, Any]) -> Message:
         tool_call_id=row["tool_call_id"],
         token_usage=row["token_usage"],
         images=row["images"],
+    )
+
+
+def _to_memory(row: dict[str, Any]) -> Memory:
+    return Memory(
+        id=row["id"],
+        user_id=row["user_id"],
+        content=row["content"],
+        category=row["category"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 
@@ -228,3 +250,57 @@ class PostgresSessionRepository:
             )
             rows = cur.fetchall()
         return [_to_message(row) for row in rows]
+
+    # ---------- 长期记忆 ----------
+    def add_memory(self, user_id: str, content: str, category: str = "fact") -> Memory:
+        memory_id = uuid4().hex
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                INSERT INTO memories (id, user_id, content, category)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, user_id, content, category, created_at, updated_at
+                """,
+                (memory_id, user_id, content, category),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        return _to_memory(row)
+
+    def list_memories(self, user_id: str) -> list[Memory]:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT id, user_id, content, category, created_at, updated_at
+                FROM memories
+                WHERE user_id = %s
+                ORDER BY updated_at DESC
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
+        return [_to_memory(row) for row in rows]
+
+    def update_memory(self, user_id: str, memory_id: str, content: str) -> Memory | None:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                UPDATE memories SET content = %s, updated_at = now()
+                WHERE id = %s AND user_id = %s
+                RETURNING id, user_id, content, category, created_at, updated_at
+                """,
+                (content, memory_id, user_id),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        return _to_memory(row) if row else None
+
+    def delete_memory(self, user_id: str, memory_id: str) -> bool:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM memories WHERE id = %s AND user_id = %s",
+                (memory_id, user_id),
+            )
+            deleted = cur.rowcount > 0
+        self._conn.commit()
+        return deleted

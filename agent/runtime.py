@@ -48,6 +48,7 @@ class AgentRuntime:
             session_id: str,
             max_turns: int | None = None,
             reasoning: Any = None,
+            memory: list[str] | None = None,
             cancel_event=None,
     ) -> Iterator[dict[str, Any]]:
         effective_max_turns = max_turns if max_turns is not None else self.default_max_turns
@@ -57,6 +58,7 @@ class AgentRuntime:
             "query": query,
             "max_turns": effective_max_turns,
             "reasoning": reasoning,
+            "memory": memory or [],
         }
 
         yield from self.graph.stream(

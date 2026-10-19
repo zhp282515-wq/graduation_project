@@ -110,6 +110,14 @@ def create_nodes(
         )
         if prompts:
             system_text += f"\n{prompts}"
+        memory = state.get("memory") or []
+        if memory:
+            system_text += (
+                "\n\n# 【关于用户的长期记忆】\n"
+                "以下是此前对话中记录下来的事实与偏好，回答时请自然地运用。"
+                "不要说出“我记住了”之类的话，也不要把它们当成当前问题：\n"
+                + "\n".join(f"- {m}" for m in memory)
+            )
         if summary:
             system_text += (
                 "\n\n# 【较早对话的摘要】\n"

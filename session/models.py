@@ -28,3 +28,13 @@ class Message:
     tool_call_id: str | None = None
     token_usage: dict[str, Any] | None = None
     images: list[str] | None = None
+
+
+@dataclass
+class Memory:
+    id: str
+    user_id: str
+    content: str
+    category: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

@@ -10,6 +10,7 @@ class AgentInput(TypedDict):
     max_turns: NotRequired[int]
     timeout: NotRequired[int]
     reasoning: NotRequired[Any]        # 值域由所配 Provider 决定：Qwen 是 bool，OpenAI 是档位字符串
+    memory: NotRequired[list[str]]     # 该用户的长期记忆（纯文本条目），由服务层查库注入
 
 
 class MessagesState(TypedDict):
@@ -25,6 +26,7 @@ class AgentState(MessagesState):
     turn_count: NotRequired[int]
     timeout: NotRequired[int]
     reasoning: NotRequired[Any]
+    memory: NotRequired[list[str]]
     summary: NotRequired[str]
     summary_upto: NotRequired[int]
     total_tokens: NotRequired[int]     # ← 本轮累计消耗

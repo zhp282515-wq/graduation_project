@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from session.repository import PostgresSessionRepository
 from session.service import SessionService
 from agent.runtime import AgentRuntime
+from agent.memory import MemoryExtractor
 from agent.tools.weather import WeatherTool
 from agent.tools.websearch import WebSearchTool
 from agent.tools.academic_calendar import AcademicCalendarTool
@@ -108,6 +109,10 @@ async def lifespan(app: FastAPI):
         checkpointer = saver,
         summary_model = DashScopeProvider(model="qwen3.7-flash"),
     )
+    # 记忆抽取用便宜的小模型，与摘要模型共用即可
+    app.state.memory_extractor = MemoryExtractor(
+        DashScopeProvider(model="qwen3.7-flash")
+    )
     yield
 
     pg_pool.close()
@@ -130,7 +135,8 @@ def get_service(request: Request):
     with pool.connection() as conn:
         yield SessionService(
             PostgresSessionRepository(conn),
-            request.app.state.runtime
+            request.app.state.runtime,
+            getattr(request.app.state, "memory_extractor", None),
         )
 
 app = FastAPI(lifespan=lifespan)
@@ -256,6 +262,46 @@ async def upload_image(
 
 # 静态托管上传目录，前端可直接用 url 显示
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+# ---------- 长期记忆 ----------
+class MemoryUpdate(BaseModel):
+    content: str
+
+
+@app.get("/api/memories")
+async def list_memories(
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    return service.list_memories(user["id"])
+
+
+@app.put("/api/memories/{memory_id}")
+async def update_memory(
+        memory_id: str,
+        body: MemoryUpdate,
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="内容不能为空")
+    updated = service.update_memory(user["id"], memory_id, content)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return updated
+
+
+@app.delete("/api/memories/{memory_id}")
+async def delete_memory(
+        memory_id: str,
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    if not service.delete_memory(user["id"], memory_id):
+        raise HTTPException(status_code=404, detail="记忆不存在")
+    return {"deleted": memory_id}
 
 
 if __name__ == "__main__":

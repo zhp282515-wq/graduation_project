@@ -2,7 +2,7 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
-from session.models import DEFAULT_SESSION_TITLE, Message, Session
+from session.models import DEFAULT_SESSION_TITLE, Memory, Message, Session
 from session.ports import AgentPort, SessionRepository
 from utils.logger_tool import logger
 from datetime import datetime
@@ -17,9 +17,11 @@ class SessionService:
         self,
         repository: SessionRepository,
         runtime: AgentPort,
+        memory_extractor: Any | None = None,
     ):
         self._repo = repository
         self._runtime = runtime
+        self._extractor = memory_extractor
 
     def create_session(self, user_id: str, title: str | None = None) -> Session:
         # 未指定标题（= 用户点「新会话」）时复用已有的空会话，
@@ -32,6 +34,16 @@ class SessionService:
 
     def get_session(self, user_id: str, session_id: str) -> Session | None:
         return self._repo.get_session(user_id, session_id)
+
+    # ---------- 长期记忆 ----------
+    def list_memories(self, user_id: str) -> list[Memory]:
+        return self._repo.list_memories(user_id)
+
+    def update_memory(self, user_id: str, memory_id: str, content: str) -> Memory | None:
+        return self._repo.update_memory(user_id, memory_id, content)
+
+    def delete_memory(self, user_id: str, memory_id: str) -> bool:
+        return self._repo.delete_memory(user_id, memory_id)
 
     def list_sessions(self, user_id: str) -> list[Session]:
         return self._repo.list_sessions(user_id)
@@ -90,6 +102,7 @@ class SessionService:
             query,
             max_turns=max_turns,
             reasoning=reasoning,
+            user_id=user_id,
         )
 
     def _stream(
@@ -99,10 +112,14 @@ class SessionService:
         *,
         max_turns: int | None,
         reasoning: Any | None = None,
+        user_id: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         started = time.perf_counter()
         final_content = ""
         token_usage: dict[str, Any] | None = None
+
+        memories = self._repo.list_memories(user_id) if user_id else []
+        memory_lines = [m.content for m in memories]
 
         yield {
             "type": "run_started",
@@ -116,6 +133,7 @@ class SessionService:
                 session_id=session_id,
                 max_turns=max_turns,
                 reasoning=reasoning,
+                memory=memory_lines,
             ):
                 if event.get("type") == "done":
                     final = event.get("final_answer") or {}
@@ -147,3 +165,31 @@ class SessionService:
                 logger.info(
                     "会话 %s 完成一轮，耗时 %.2fs", session_id, time.perf_counter() - started
                 )
+                self._maybe_extract(user_id, query, final_content, memory_lines)
+
+    def _maybe_extract(
+        self,
+        user_id: str | None,
+        query: list[dict[str, Any]],
+        answer: str,
+        known: list[str],
+    ) -> None:
+        """本轮结束后尝试抽取新记忆。任何失败都只记日志，不影响主流程。"""
+        if self._extractor is None or not user_id:
+            return
+        user_text = "".join(
+            p.get("text", "") for p in query if isinstance(p, dict) and p.get("type") == "text"
+        )
+        try:
+            items = self._extractor.extract(
+                user_text=user_text,
+                assistant_text=answer,
+                known=known,
+            )
+            fresh = [i for i in items if i["content"] not in known]
+            for item in fresh:
+                self._repo.add_memory(user_id, item["content"], item["category"])
+            if fresh:
+                logger.info("用户 %s 新增 %d 条长期记忆", user_id, len(fresh))
+        except Exception:
+            logger.exception("记忆抽取失败（不影响本轮对话）")
