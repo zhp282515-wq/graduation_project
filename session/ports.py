@@ -8,6 +8,8 @@ class SessionRepository(Protocol):
 
     def create_session(self, user_id: str, title: str) -> Session: ...
 
+    def find_empty_session(self, user_id: str, default_title: str) -> Session | None: ...
+
     def get_session(self, user_id: str, session_id: str) -> Session | None: ...
 
     def list_sessions(self, user_id: str) -> list[Session]: ...
@@ -24,6 +26,7 @@ class SessionRepository(Protocol):
         role: str,
         content: str,
         *,
+        images: list[str] | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
         tool_call_id: str | None = None,
         token_usage: dict[str, Any] | None = None,

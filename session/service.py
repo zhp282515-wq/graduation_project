@@ -22,6 +22,12 @@ class SessionService:
         self._runtime = runtime
 
     def create_session(self, user_id: str, title: str | None = None) -> Session:
+        # 未指定标题（= 用户点「新会话」）时复用已有的空会话，
+        # 保证同一用户最多只有一个空会话，不会越点越多。
+        if title is None:
+            existing = self._repo.find_empty_session(user_id, DEFAULT_SESSION_TITLE)
+            if existing is not None:
+                return existing
         return self._repo.create_session(user_id, title or DEFAULT_SESSION_TITLE)
 
     def get_session(self, user_id: str, session_id: str) -> Session | None:
@@ -54,6 +60,7 @@ class SessionService:
         *,
         text: str,
         images: list[str] | None = None,
+        image_urls: list[str] | None = None,
         max_turns: int | None = None,
         reasoning: Any | None = None,
     ) -> Iterator[dict[str, Any]]:
@@ -61,14 +68,20 @@ class SessionService:
 
         这样接 FastAPI 时，"会话不存在" 能在响应头发出前抛成 404，
         而不是在 200 之后断流。
+
+        images 是给模型读取的本地路径；image_urls 是落库、供前端回显的地址。
+        两者分开是因为模型要能读文件，而浏览器要能直接 <img src>。
         """
         session = self._repo.get_session(user_id, session_id)
         if session is None:
             raise ValueError(f"会话不存在：{session_id}")
 
-        # 落库只存文本 + 占位，图片本身在 checkpoint 里，见"决策 2"
-        stored = f"[图片×{len(images)}] {text}" if images else text
-        self._repo.add_message(session_id, "user", stored)
+        self._repo.add_message(
+            session_id,
+            "user",
+            text,
+            images=image_urls if image_urls is not None else images,
+        )
         if session.title == DEFAULT_SESSION_TITLE:
             self._repo.update_session_title(user_id, session_id, text[:_AUTOTITLE_MAX_LEN] or "图片消息")
 

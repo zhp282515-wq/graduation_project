@@ -27,3 +27,4 @@ class Message:
     tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
     token_usage: dict[str, Any] | None = None
+    images: list[str] | None = None

@@ -1,3 +1,4 @@
+
 import re
 import time
 from typing import Any
@@ -12,6 +13,7 @@ from .summarizer import Summarizer
 from utils.logger_tool import logger
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 _COMPACT_TRIGGER = 0.6
 _KEEP_RECENT_TURNS = 3
@@ -202,33 +204,47 @@ def create_nodes(
         tool_calls = state["last_response"].tool_calls
 
         def run_one(tool_call):
-            writer({
-                "type": "tool_started",
-                "name": tool_call.name,
-                "tool_call_id": tool_call.id,
-            })
+            writer(
+                {
+                    "type": "tool_started",
+                    "name": tool_call.name,
+                    "tool_call_id": tool_call.id
+                }
+            )
+
             start = time.perf_counter()
             outcome = execute_tool(registry, tool_call)
             elapsed = time.perf_counter() - start
-            writer({
-                "type": "tool_finished",
-                "name": tool_call.name,
-                "status": outcome.status,
-                "tool_call_id": tool_call.id,
-                "elapsed_ms": int(elapsed * 1000),
-                "sources": outcome.sources,
-            })
+
+            writer(
+                {
+                    "type": "tool_finished",
+                    "name": tool_call.name,
+                    "status": outcome.status,
+                    "tool_call_id": tool_call.id,
+                    "elapsed_ms": int(elapsed * 1000),
+                    "sources": outcome.sources
+                }
+            )
+
             return ChatMessage(
                 role="tool",
                 content=[{"type": "text", "text": outcome.content}],
-                tool_call_id=tool_call.id,
+                tool_call_id=tool_call.id
             )
 
         if len(tool_calls) <= 1:
             tool_messages = [run_one(tc) for tc in tool_calls]
         else:
+            # 每条任务单独带一份 context：Context 对象不支持并发进入，
+            # 必须一条一份副本，不能共用
+            contexts = [copy_context() for _ in tool_calls]
             with ThreadPoolExecutor(max_workers=len(tool_calls)) as pool:
-                tool_messages = list(pool.map(run_one, tool_calls))
+                futures = [
+                    pool.submit(ctx.run, run_one, tc)
+                    for ctx, tc in zip(contexts, tool_calls)
+                ]
+                tool_messages = [f.result() for f in futures]
 
         return {
             "messages": tool_messages

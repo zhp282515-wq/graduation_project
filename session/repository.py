@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls   JSONB,
     tool_call_id TEXT,
     token_usage  JSONB,
+    images       JSONB,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -34,6 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id, id);
 # ——那样旧行会被静默填成空串，后面回填时就分不清“空值”和“新加的”了。
 _MIGRATE = """
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS images JSONB;
 """
 
 
@@ -58,6 +60,7 @@ def _to_message(row: dict[str, Any]) -> Message:
         tool_calls=row["tool_calls"],
         tool_call_id=row["tool_call_id"],
         token_usage=row["token_usage"],
+        images=row["images"],
     )
 
 
@@ -99,6 +102,27 @@ class PostgresSessionRepository:
             row = cur.fetchone()
         self._conn.commit()
         return _to_session(row)
+
+    def find_empty_session(self, user_id: str, default_title: str) -> Session | None:
+        """找出该用户最早的一个空会话（标题仍是默认标题且没有任何消息）。
+
+        用 NOT EXISTS 而不是 LEFT JOIN + GROUP BY，避免消息多时聚合整表。
+        """
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT id, user_id, title, status, created_at, updated_at
+                FROM sessions s
+                WHERE s.user_id = %s
+                  AND s.title = %s
+                  AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id)
+                ORDER BY s.created_at ASC
+                LIMIT 1
+                """,
+                (user_id, default_title),
+            )
+            row = cur.fetchone()
+        return _to_session(row) if row else None
 
     def get_session(self, user_id: str, session_id: str) -> Session | None:
         with self._conn.cursor(row_factory=dict_row) as cur:
@@ -163,6 +187,7 @@ class PostgresSessionRepository:
         role: str,
         content: str,
         *,
+        images: list[str] | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
         tool_call_id: str | None = None,
         token_usage: dict[str, Any] | None = None,
@@ -170,9 +195,9 @@ class PostgresSessionRepository:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, token_usage)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING id, session_id, role, content, created_at, tool_calls, tool_call_id, token_usage
+                INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, token_usage, images)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, session_id, role, content, created_at, tool_calls, tool_call_id, token_usage, images
                 """,
                 (
                     session_id,
@@ -181,6 +206,7 @@ class PostgresSessionRepository:
                     Jsonb(tool_calls) if tool_calls is not None else None,
                     tool_call_id,
                     Jsonb(token_usage) if token_usage is not None else None,
+                    Jsonb(images) if images is not None else None,
                 ),
             )
             row = cur.fetchone()
@@ -192,7 +218,7 @@ class PostgresSessionRepository:
             cur.execute(
                 """
                 SELECT m.id, m.session_id, m.role, m.content, m.created_at,
-                       m.tool_calls, m.tool_call_id, m.token_usage
+                       m.tool_calls, m.tool_call_id, m.token_usage, m.images
                 FROM messages m
                 JOIN sessions s ON s.id = m.session_id
                 WHERE m.session_id = %s AND s.user_id = %s

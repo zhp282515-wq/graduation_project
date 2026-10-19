@@ -136,10 +136,14 @@ class MilvusVectorStore:
         """
         per_route = candidate_limit or limit * 4
 
+        # HNSW 要求 ef > k，k 就是本次单路召回数。写死 ef=64 时，
+        # limit≥16 就会让 per_route(64+) 追平或超过 ef，QueryNode 直接拒绝。
+        ef = max(64, per_route * 2)
+
         dense_req = AnnSearchRequest(
             data=[list(query_vector)],
             anns_field="vector",
-            param={"metric_type": "COSINE", "params": {"ef": 64}},
+            param={"metric_type": "COSINE", "params": {"ef": ef}},
             limit=per_route,
             expr=expression,
         )
@@ -269,6 +273,8 @@ class MilvusVectorStore:
         output_fields: Sequence[str] = ("text", "chunk_index"),
     ) -> list[dict[str, Any]]:
         """稠密向量检索，按余弦相似度返回 top-k。"""
+        # HNSW 同样要求 ef > k，这里 k=limit。写死 ef=64 时 limit>64 会被拒。
+        ef = max(64, limit * 2)
         results = self.client.search(
             collection_name=self.collection,
             data=[list(query_vector)],
@@ -276,7 +282,7 @@ class MilvusVectorStore:
             limit=limit,
             filter=expression,
             output_fields=list(output_fields),
-            search_params={"metric_type": "COSINE", "params": {"ef": 64}},
+            search_params={"metric_type": "COSINE", "params": {"ef": ef}},
         )
 
         hits: list[dict[str, Any]] = []
