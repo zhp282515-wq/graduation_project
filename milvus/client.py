@@ -294,6 +294,29 @@ class MilvusVectorStore:
         logger.info("检索到 %d 条 (limit=%d)", len(hits), limit)
         return hits
 
+    def list_chunks(
+        self,
+        file_md5: str,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """按顺序取某文档的切片。
+
+        用 chunk_index 范围过滤而不是 query 的 offset：chunk_index 由
+        insert_chunks 里的 enumerate 赋值，每份文档内连续从 0 开始，
+        因此 [start, end) 正好是一页；排序在 Python 里做，不依赖 Milvus 返回顺序。
+        """
+        rows = self.client.query(
+            collection_name=self.collection,
+            filter="file_md5 == {m} and chunk_index >= {start} and chunk_index < {end}",
+            filter_params={"m": file_md5, "start": offset, "end": offset + limit},
+            output_fields=["chunk_index", "text", "section_path", "block_type", "page"],
+            limit=limit,
+        )
+        return sorted(rows, key=lambda r: r.get("chunk_index", 0))
+
+
 
 if __name__ == "__main__":
     from models.dashscope.embedding import DashScopeEmbedding

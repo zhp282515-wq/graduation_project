@@ -8,8 +8,9 @@ from utils.second_tool import fmt_duration
 
 
 class KnowledgeSearchTool(BaseTool):
-    def __init__(self):
-        self.service = KnowledgeService()
+    def __init__(self, service: KnowledgeService | None = None):
+        # 生产环境由 lifespan 注入单例，避免重复建 Milvus 客户端与模型客户端
+        self.service = service or KnowledgeService()
 
     @property
     def name(self) -> str:

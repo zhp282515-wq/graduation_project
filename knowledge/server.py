@@ -1,6 +1,6 @@
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from knowledge.chunking import chunk_content_list
 from knowledge.mineru_parser import MineruParser
@@ -71,6 +71,7 @@ class KnowledgeService:
         content_list: list[dict[str, Any]] | None = None,
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
+        on_stage: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         """文档的解析、分片、入库。md5 相同则跳过。
 
@@ -85,17 +86,23 @@ class KnowledgeService:
             logger.info("文档已入库，跳过：%s (file_md5=%s)", path.name, file_md5)
             return {"file_md5": file_md5, "inserted": 0, "skipped": True}
 
+        if on_stage is not None:
+            on_stage("parsing")
         if content_list is None:
             doc = self.parser.parse_file(path)
             content_list = doc.content_list
 
         chunks = chunk_content_list(content_list, doc_title=title or path.stem)
         texts = [chunk.text for chunk in chunks]
+        if on_stage is not None:
+            on_stage("embedding")
         vectors = self.embedder.embed_texts(texts)
         metadatas = [
             {"section_path": c.section_path, "block_type": c.block_type, "page": c.page}
             for c in chunks
         ]
+        if on_stage is not None:
+            on_stage("inserting")
         inserted = self.store.insert_chunks(
             texts,
             vectors,
@@ -135,6 +142,16 @@ class KnowledgeService:
         finally:
             iterator.close()
         return list(docs.values())
+
+    def list_chunks(
+        self,
+        file_md5: str,
+        *,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """某文档按 chunk_index 顺序的一页切片。"""
+        return self.store.list_chunks(file_md5, offset=offset, limit=limit)
 
     def get_document(self, file_md5: str) -> dict[str, Any] | None:
         """根据file_md5查找库中对应文档"""

@@ -1,10 +1,15 @@
+import hashlib
 import os
 import json
+import re
 import uuid
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request, Depends, HTTPException, Header, UploadFile, File
+from fastapi import (
+    BackgroundTasks, Depends, FastAPI, File, Form, Header,
+    HTTPException, Query, Request, UploadFile,
+)
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -22,6 +27,10 @@ from pydantic import BaseModel
 
 from session.repository import PostgresSessionRepository
 from session.service import SessionService
+from knowledge.documents import KbDocumentRepository
+from knowledge.server import KnowledgeService
+from utils.logger_tool import logger
+from utils.md_to_content_list import md_to_content_list
 from agent.runtime import AgentRuntime
 from agent.memory import MemoryExtractor
 from agent.tools.weather import WeatherTool
@@ -40,6 +49,14 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+# ---------- 知识库文档上传 ----------
+KNOWLEDGE_UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge_uploads"
+KNOWLEDGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_DOC_TYPES = {".md", ".txt", ".pdf", ".doc", ".docx"}
+MAX_DOC_BYTES = 50 * 1024 * 1024
+_UNSAFE_CHARS = {chr(c) for c in (92, 47, 58, 42, 63, 34, 60, 62, 124)} | {chr(i) for i in range(32)}
 
 
 class ChatRequest(BaseModel):
@@ -95,6 +112,23 @@ async def lifespan(app: FastAPI):
 
     with pg_pool.connection() as conn:
         PostgresSessionRepository(conn).setup()
+        kb_repo = KbDocumentRepository(conn)
+        kb_repo.setup()
+        stalled = kb_repo.reconcile_after_restart()
+        if stalled:
+            logger.warning("知识库：%d 个在途任务因服务重启被标记为失败", stalled)
+
+    # 知识库服务只建一次：Milvus 客户端、embedding、reranker、MinerU 解析器都复用。
+    # 初始化失败不能拖垮整个服务 —— 聊天照常，知识库接口返回 503。
+    try:
+        kb_service = KnowledgeService()
+        app.state.knowledge = kb_service
+        app.state.kb_error = None
+    except Exception as exc:
+        logger.exception("知识库服务初始化失败")
+        kb_service = None
+        app.state.knowledge = None
+        app.state.kb_error = f"{type(exc).__name__}: {exc}"
 
     app.state.pg_pool = pg_pool
     app.state.runtime = AgentRuntime(
@@ -103,7 +137,7 @@ async def lifespan(app: FastAPI):
             WeatherTool(),
             WebSearchTool(),
             AcademicCalendarTool(),
-            KnowledgeSearchTool(),
+            KnowledgeSearchTool(kb_service) if kb_service else KnowledgeSearchTool(),
         ],
         prompts = get_prompt(),
         checkpointer = saver,
@@ -114,6 +148,17 @@ async def lifespan(app: FastAPI):
         DashScopeProvider(model="qwen3.7-flash")
     )
     yield
+
+    if kb_service is not None:
+        for closer in (
+            getattr(kb_service.parser, "close", None),
+            getattr(getattr(kb_service.store, "client", None), "close", None),
+        ):
+            try:
+                if closer:
+                    closer()
+            except Exception:
+                logger.warning("关闭知识库资源时出错", exc_info=True)
 
     pg_pool.close()
     saver_pool.close()
@@ -138,6 +183,22 @@ def get_service(request: Request):
             request.app.state.runtime,
             getattr(request.app.state, "memory_extractor", None),
         )
+
+
+def get_knowledge(request: Request) -> KnowledgeService:
+    service = getattr(request.app.state, "knowledge", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"知识库未就绪：{getattr(request.app.state, 'kb_error', '未知原因')}",
+        )
+    return service
+
+
+def get_kb_repo(request: Request):
+    pool: ConnectionPool = request.app.state.pg_pool
+    with pool.connection() as conn:
+        yield KbDocumentRepository(conn)
 
 app = FastAPI(lifespan=lifespan)
 
@@ -302,6 +363,318 @@ async def delete_memory(
     if not service.delete_memory(user["id"], memory_id):
         raise HTTPException(status_code=404, detail="记忆不存在")
     return {"deleted": memory_id}
+
+
+# ============================================================
+# 知识库管理
+# ============================================================
+
+def _serialize_doc(row: dict) -> dict:
+    return {
+        "file_md5": row["file_md5"],
+        "file_name": row["file_name"],
+        "original_name": row.get("original_name"),
+        "file_type": row["file_type"],
+        "file_size": int(row.get("file_size") or 0),
+        "chunk_count": row.get("chunk_count"),
+        "status": row["status"],
+        "stage": row.get("stage"),
+        "error": row.get("error"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "ingested_at": row.get("ingested_at"),
+    }
+
+
+def _bootstrap_registry(repo: KbDocumentRepository, service: KnowledgeService) -> None:
+    """登记表为空时，用 Milvus 现有文档回填一次（脚本入库的历史数据）。"""
+    docs = service.list_documents()
+    if docs:
+        repo.upsert_ready_from_milvus(docs)
+        logger.info("知识库登记表已回填 %d 份文档", len(docs))
+
+
+@app.get("/api/knowledge/documents")
+def list_knowledge_documents(
+        q: str = "",
+        type: str | None = None,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(10, ge=1, le=50),
+        sort: str = "uploaded",
+        service: KnowledgeService = Depends(get_knowledge),
+        repo: KbDocumentRepository = Depends(get_kb_repo),
+):
+    if repo.count() == 0:
+        _bootstrap_registry(repo, service)
+
+    items, total = repo.list_page(
+        q=q, file_type=type, page=page, page_size=page_size, sort=sort
+    )
+    return {
+        "items": [_serialize_doc(r) for r in items],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "facets": repo.facets(q),
+    }
+
+
+@app.get("/api/knowledge/documents/{file_md5}/chunks")
+def list_knowledge_chunks(
+        file_md5: str,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        service: KnowledgeService = Depends(get_knowledge),
+        repo: KbDocumentRepository = Depends(get_kb_repo),
+):
+    doc = repo.get(file_md5)
+    if doc is None:
+        milvus_doc = service.get_document(file_md5)
+        if milvus_doc is None:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        doc = {
+            **milvus_doc,
+            "status": "ready",
+            "original_name": None,
+            "created_at": None,
+            "updated_at": None,
+            "ingested_at": None,
+            "stage": None,
+            "error": None,
+        }
+
+    rows = service.list_chunks(
+        file_md5, offset=(page - 1) * page_size, limit=page_size
+    )
+    if not rows:
+        # 没有取到块时用 Strong 再确认一次：刚删完的文档在 Bounded 视图里可能还"存在"
+        live = service.store.get_doc_status(file_md5, consistency_level="Strong")
+        if live is None:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        total = int(live.get("chunk_count") or 0)
+    else:
+        total = int(doc.get("chunk_count") or 0)
+        if total <= 0:
+            live = service.store.get_doc_status(file_md5, consistency_level="Strong")
+            total = int((live or {}).get("chunk_count") or 0)
+
+    return {
+        "document": _serialize_doc(doc),
+        "items": [
+            {
+                "chunk_index": r.get("chunk_index", 0),
+                "text": r.get("text") or "",
+                "section_path": r.get("section_path"),
+                "page": r.get("page"),
+                "block_type": r.get("block_type"),
+                "char_count": len(r.get("text") or ""),
+            }
+            for r in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@app.get("/api/knowledge/jobs/{file_md5}")
+def get_knowledge_job(
+        file_md5: str,
+        service: KnowledgeService = Depends(get_knowledge),
+        repo: KbDocumentRepository = Depends(get_kb_repo),
+):
+    doc = repo.get(file_md5)
+    if doc is not None:
+        return _serialize_doc(doc)
+
+    # 历史上的脚本入库没有登记行，按 Milvus 现状合成一个 ready
+    milvus_doc = service.get_document(file_md5)
+    if milvus_doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return {
+        **milvus_doc,
+        "original_name": None,
+        "status": "ready",
+        "stage": None,
+        "error": None,
+        "created_at": None,
+        "updated_at": None,
+        "ingested_at": None,
+    }
+
+
+@app.post("/api/knowledge/sync")
+def sync_knowledge(
+        service: KnowledgeService = Depends(get_knowledge),
+        repo: KbDocumentRepository = Depends(get_kb_repo),
+):
+    docs = service.list_documents()
+    upserted = repo.upsert_ready_from_milvus(docs)
+    removed = repo.delete_missing({d["file_md5"] for d in docs})
+    return {"scanned": len(docs), "upserted": upserted, "removed": removed}
+
+
+@app.delete("/api/knowledge/documents/{file_md5}")
+def delete_knowledge_document(
+        file_md5: str,
+        service: KnowledgeService = Depends(get_knowledge),
+        repo: KbDocumentRepository = Depends(get_kb_repo),
+):
+    doc = repo.get(file_md5)
+    if doc and doc["status"] in ("pending", "processing"):
+        raise HTTPException(status_code=409, detail="文档正在处理中，请稍后再试")
+
+    # del_document 返回 bool（是否删到了行），块数用删除前查到的 chunk_count
+    removed = service.del_document(file_md5)
+    repo.delete(file_md5)
+    if not removed and doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    chunks = int((doc or {}).get("chunk_count") or 0)
+
+    # 只删上传目录里的源文件；历史脚本入库的文件不在这个目录下，不碰
+    source = (doc or {}).get("source_path")
+    if source:
+        path = Path(source).resolve()
+        try:
+            if path.is_file() and path.is_relative_to(KNOWLEDGE_UPLOAD_DIR.resolve()):
+                path.unlink()
+        except OSError:
+            logger.warning("删除源文件失败：%s", path, exc_info=True)
+
+    return {"deleted": file_md5, "chunks_deleted": chunks}
+
+
+def run_ingest_job(
+        pool: ConnectionPool,
+        service: KnowledgeService,
+        file_md5: str,
+        source_path: Path,
+        title: str | None,
+        display_name: str,
+) -> None:
+    """后台入库。同步函数由 Starlette 丢进线程池，不会阻塞事件循环。
+
+    每次状态更新都从连接池现借连接 —— 请求期的那条连接在响应返回时已经归还。
+    """
+    def stage(name: str) -> None:
+        with pool.connection() as conn:
+            KbDocumentRepository(conn).set_processing(file_md5, name)
+
+    try:
+        suffix = source_path.suffix.lower()
+        if suffix in {".md", ".txt"}:
+            # md/txt 跳过 MinerU：本地转 content_list 快且稳定
+            items, h1 = md_to_content_list(source_path, title=title)
+            service.load_document(
+                source_path,
+                content_list=items,
+                title=title or h1,
+                on_stage=stage,
+            )
+        else:
+            service.load_document(source_path, title=title, on_stage=stage)
+
+        doc = service.get_document(file_md5)
+        count = int((doc or {}).get("chunk_count") or 0)
+        resolved_name = (doc or {}).get("file_name") or display_name
+        with pool.connection() as conn:
+            KbDocumentRepository(conn).mark_ready(
+                file_md5, count, file_name=resolved_name
+            )
+        logger.info("知识库入库完成：%s（%d 块）", resolved_name, count)
+    except Exception as exc:
+        logger.exception("知识库入库失败 file_md5=%s", file_md5)
+        try:
+            with pool.connection() as conn:
+                KbDocumentRepository(conn).mark_failed(
+                    file_md5, f"{type(exc).__name__}: {exc}"
+                )
+        except Exception:
+            logger.exception("写入失败状态时出错 file_md5=%s", file_md5)
+
+
+@app.post("/api/knowledge/upload", status_code=202)
+async def upload_knowledge_document(
+        background: BackgroundTasks,
+        request: Request,
+        file: UploadFile = File(...),
+        title: str | None = Form(None),
+        service: KnowledgeService = Depends(get_knowledge),
+        repo: KbDocumentRepository = Depends(get_kb_repo),
+):
+    original = Path(file.filename or "document")
+    suffix = original.suffix.lower()
+    if suffix not in ALLOWED_DOC_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"不支持的文档格式：{suffix or '未知'}",
+        )
+
+    safe_stem = "".join("_" if ch in _UNSAFE_CHARS else ch for ch in original.stem)[:60] or "document"
+
+    # 边落盘边算 md5，同时卡住大小上限
+    digest = hashlib.md5()
+    total = 0
+    tmp_path = KNOWLEDGE_UPLOAD_DIR / f".uploading-{uuid.uuid4().hex}{suffix}"
+    try:
+        with tmp_path.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_DOC_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件超过 {MAX_DOC_BYTES // 1024 // 1024}MB 上限",
+                    )
+                digest.update(chunk)
+                out.write(chunk)
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    if total == 0:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    file_md5 = digest.hexdigest()
+    existing = repo.get(file_md5)
+    if existing and existing["status"] == "ready":
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=409, detail="该文档已在知识库中")
+    if existing and existing["status"] in ("pending", "processing"):
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=409, detail="该文档正在处理中")
+
+    final_path = KNOWLEDGE_UPLOAD_DIR / f"{file_md5[:8]}-{safe_stem}{suffix}"
+    tmp_path.replace(final_path)
+
+    display_name = title or original.name
+    repo.upsert_pending(
+        file_md5,
+        file_name=display_name,
+        original_name=original.name,
+        file_type=suffix.lstrip("."),
+        file_size=total,
+        source_path=str(final_path),
+    )
+    background.add_task(
+        run_ingest_job,
+        request.app.state.pg_pool,
+        service,
+        file_md5,
+        final_path,
+        title,
+        display_name,
+    )
+    return {
+        "file_md5": file_md5,
+        "file_name": display_name,
+        "status": "pending",
+    }
 
 
 if __name__ == "__main__":
