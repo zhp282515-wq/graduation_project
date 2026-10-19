@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import BrandLogo from './components/BrandLogo.vue'
+import KnowledgePage from './components/KnowledgePage.vue'
 import ParticleDrift from './components/ParticleDrift.vue'
 import { listSessions, createSession, getMessages, deleteSession } from './api/sessions'
 import { streamChat } from './api/chat.js'
@@ -414,6 +415,16 @@ const quickLinks = [
 // 三块面板的显示/隐藏状态
 const visible = ref({ sessions: true, quick: true, flow: true })
 
+/* ===== 页面切换：问答 / 知识库 ===== */
+const currentView = ref('chat')
+const kbVisited = ref(false)
+
+function switchView(view) {
+  currentView.value = view
+  if (view === 'kb') kbVisited.value = true
+  else nextTick(scrollToBottom)
+}
+
 const fileInput = ref(null)
 const pickedFiles = ref([])   // { id, name, size, url, path, status: 'uploading'|'done'|'error' }
 const uploading = ref(false)
@@ -491,8 +502,20 @@ function removePicked(item) {
           <BrandLogo part="name" :height="30" />
         </div>
         <nav class="tabs">
-          <button class="tab glass-btn active" v-glass-tilt>问答</button>
-          <button class="tab glass-btn" v-glass-tilt>知识库</button>
+          <button
+            class="tab glass-btn"
+            :class="{ active: currentView === 'chat' }"
+            v-glass-tilt
+            type="button"
+            @click="switchView('chat')"
+          >问答</button>
+          <button
+            class="tab glass-btn"
+            :class="{ active: currentView === 'kb' }"
+            v-glass-tilt
+            type="button"
+            @click="switchView('kb')"
+          >知识库</button>
         </nav>
         <div class="meta">
           <div class="avatar" />
@@ -500,6 +523,7 @@ function removePicked(item) {
       </header>
 
       <div
+        v-show="currentView === 'chat'"
         class="layout"
         :class="{ 'no-sidebar': !visible.sessions, 'no-right': !visible.quick && !visible.flow }"
       >
@@ -798,9 +822,16 @@ function removePicked(item) {
         </aside>
       </div>
 
+      <KnowledgePage
+        v-if="kbVisited"
+        v-show="currentView === 'kb'"
+        :confirm="askConfirm"
+        :toast="toast"
+      />
+
       <!-- 隐藏后的恢复入口（在 .ui 之外，避免被层叠上下文遮挡） -->
       <button
-        v-if="!visible.sessions"
+        v-if="!visible.sessions && currentView === 'chat'"
         class="restore-tab left glass-btn"
         v-liquid-buttons.self
         type="button"
@@ -815,7 +846,7 @@ function removePicked(item) {
         <span>会话</span>
       </button>
 
-      <div v-if="!visible.quick || !visible.flow" class="restore-dock">
+      <div v-if="(!visible.quick || !visible.flow) && currentView === 'chat'" class="restore-dock">
         <button
           v-if="!visible.quick"
           class="restore-tab glass-btn"
