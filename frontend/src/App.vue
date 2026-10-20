@@ -2100,6 +2100,9 @@ html, body, #app {
   position: relative;
   isolation: isolate;
   cursor: pointer;
+  /* <button> 默认是黑色文字、Arial 字体；统一继承主题色与全局字体 */
+  color: inherit;
+  font-family: inherit;
   /* 按钮背景已足够均匀，不需要再叠 backdrop-filter：
      它在圆角元素上会分块采样，产生横向接缝，而且悬停重绘时接缝会移动。 */
   -webkit-tap-highlight-color: transparent;
