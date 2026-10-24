@@ -1,24 +1,29 @@
 {
-  "name": "jxnu-campus-assistant",
+  "name": "jxnu-observatory",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
+  "description": "江西师范大学校园智能体 · 星野台（Vue 3 重构版前端）",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@element-plus/icons-vue": "^2.3.1",
-    "element-plus": "^2.9.1",
+    "@fontsource-variable/jetbrains-mono": "^5.2.0",
+    "@fontsource/instrument-serif": "^5.2.0",
     "highlight.js": "^11.12.0",
     "markdown-it": "^15.0.3",
-    "pinia": "^2.3.0",
+    "pinia": "^3.0.0",
+    "three": "^0.186.0",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "vitest": "^3.2.0"
   }
 }

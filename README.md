@@ -1,10 +1,10 @@
-# 饭饭 · 江西师范大学校园助手（毕业设计）
+# 星野台 · 江西师范大学校园助手（毕业设计）
 
-基于 LangGraph 构建的校园智能助手：后端是 Agent + FastAPI 接口层，前端是 Vue 3 单页应用。支持多轮工具调用、流式输出、会话持久化、图片多模态输入与校园知识库检索。
+星野台（JXNU OBSERVATORY）是基于 LangGraph 的校园智能助手：后端是 Agent + FastAPI 接口层，前端是 Vue 3 单页应用。四个视图——**问学**（对话）、**典藏**（知识库）、**记忆**（长期记忆）、**星野**（知识星图）；支持多轮工具调用、SSE 流式输出、会话持久化、图片多模态输入、校园知识库检索，以及把全部知识分片映射成可探索的三维星图。
 
 ## 当前基线与进度
 
-2026-10-24 首轮整理文档和依赖时，修改前基线为 `3ba0f931250d2243e56c9b9eea8a7df7c2511f22`；该轮已提交为 `7e2d22f`。稳定性修复已提交为 `10ed576`；消息操作与来源保存以该版本为基线，并保留本地尚未提交的会话 `dot` 改动。当前功能说明反映工作区代码。
+2026-10-24 首轮整理文档和依赖时，修改前基线为 `3ba0f931250d2243e56c9b9eea8a7df7c2511f22`，该轮提交为 `7e2d22f`；稳定性修复为 `10ed576`，消息操作与来源保存/等待体验两轮叠加在 `e0cfc87`（前端优化）之上。2026-10-25 完成第五轮前端重构与知识星图，提交见仓库最新记录；功能说明以当前代码为准。
 
 | 能力 | 当前状态 |
 | --- | --- |
@@ -60,6 +60,15 @@
 - 验证：63 项 Python、19 项 Node 测试通过；来源/重新生成浏览器回归和逐段 SSE 等待体验回归均通过，覆盖并行工具、长等待、草稿和异步图片隔离、阅读位置、恢复跟随、异常断流、重试入口、旧回答保留、长记录、窄屏内联进展、键盘及减少动态效果。窄屏聊天检查使用收起侧栏后的现有布局；未将其表述为整站移动端改版。
 - 本轮没有调用付费模型，也没有进行真实用户等待感测试；主观等待改善和真实首字延迟仍需后续测量。常规构建继续受本机已有 esbuild 临时文件删除权限问题影响，内置内存回退构建通过（1842 个模块），未修改依赖源码或 Vite 配置。本轮不自动提交或推送。
 
+### 前端重构与知识星图（第五轮，2026-10-24 → 10-25）
+
+- 前端由单文件 `App.vue`（约 2900 行）+ Element Plus + WebGL 液态玻璃整体重写为 Vue 3.5 + vue-router 4 + Pinia 3 + 自研设计系统「星野台 / JXNU OBSERVATORY」：四视图、纸本 / 星夜双材质令牌、会话档案抽屉、⌘K 命令面板、移动端底部导航。
+- 原有能力全部保留并补齐：多会话并行的后台流式、停止生成、失败后「把问题放回书写台」、思考过程折叠、Markdown 代码块复制、出处条全量横向浏览与网页出处直达、图片拖拽 / 粘贴上传、知识库上传进度与任务状态、记忆行内编辑、校园入口 6 条外链。
+- 新增知识星图（`knowledge/starmap.py` + `frontend/src/three/starfield.js`）：把 Milvus 中 1759 个真实分片映射为三维星体，坐标由文档质心 MDS + 径向压缩 + 星群分离 + 文档内 PCA 生成；支持自动旋转（4.56°/s，可暂停并记住选择）、精确三维拾取、悬停预览、点击涟漪、从星体展开的分片详情、星体间连续镜头飞行与机位还原、复位回首帧机位、文档名标签开关、全文搜索 / 文档 / 格式筛选。四类关系在界面中分别标注：真实归属、真实 `chunk_index` 顺序、跨文档语义 kNN、纯视觉排布。
+- 新增只读接口 `GET /api/knowledge/overview`、`/api/knowledge/starmap`、`/starmap/points`、`/starmap/edges`；均为增量扩展，原有路径、请求体与 SSE 事件不变。
+- 可读性：两套主题的正文与次级文字校准到 WCAG AA（纸本 `ink-3` 6.11、`ink-4` 4.58；星夜 6.76 / 5.42），星图面板在动态星空上改用 0.9 不透明底色；`prefers-reduced-motion` 下默认关闭自转与入场运镜，并提供「动效已按系统关闭 · 开启」的显式开关。
+- 验证：后端 `unittest` 79 项、前端 Vitest 58 项；`vite build` 约 1.2 s（three 单独分包，仅星图路由懒加载）；真实 Chrome 下完成 6 条路由 × 1440/1024/390 冒烟、真实 SSE 对话、图片多模态、上传 / 删除 / 同步、记忆编辑、星图拾取与镜头过渡等联调。完整记录见 [`DELIVERY.md`](DELIVERY.md)。
+
 ## 功能特性
 
 - **多轮 Agent 循环**：LangGraph `StateGraph` 编排，LLM 自主决定是否调用工具，带最大轮次限制与兜底总结
@@ -74,7 +83,28 @@
 - **知识库管线**：Web 上传支持 MD / TXT / PDF / DOC / DOCX，MD / TXT 本地转换，其余交给 MinerU 云 API；结构切块后按文本嵌入，以文件 md5 去重。图片块只使用图注和描述文字，不做图片向量入库
 - **混合检索**：Milvus 稠密向量 + BM25 稀疏向量，RRF 融合后接重排模型；重排阈值当前为 0.3，需用真实评测集校准，不能据此保证答案有依据
 - **知识库管理**：上传后台入库、阶段状态、失败记录、文档搜索与格式筛选、分页、切片查看、删除、Milvus 登记同步；服务重启后将中断任务标记为失败
-- **Web 前端**：会话分组与搜索、多会话并行的后台流式、Markdown 渲染、WebGL 液态玻璃背景
+- **Web 前端（星野台 / JXNU OBSERVATORY）**：四个视图——问学、典藏、记忆、星野；会话分组与搜索、多会话并行的后台流式、Markdown + 代码高亮、思考过程折叠、工具轨迹、出处抽屉、图片上传；纸本 / 星夜双主题
+- **知识星图（星野）**：把知识库全部真实分片映射为可探索的三维星图，支持缩放 / 平移 / 拾取、全文搜索定位、按文档与格式筛选、分片详情与文档跳转，并区分「真实归属 / 真实顺序 / 语义相似 / 纯视觉排布」四类关系
+
+## 界面截图
+
+1600px 宽的压缩截图在 [`docs/screenshots/`](docs/screenshots/)，原始 2×DPR 截图未入库。
+
+| 问学（扉页） | 一次带出处的回答 |
+| --- | --- |
+| ![](docs/screenshots/desktop-inquiry.jpg) | ![](docs/screenshots/desktop-answer.jpg) |
+
+| 典藏（列表 + 文档详情） | 星夜主题下的问学 |
+| --- | --- |
+| ![](docs/screenshots/desktop-archive.jpg) | ![](docs/screenshots/desktop-atlas-night.jpg) |
+
+| 星野（自动观测） | 星体详情 |
+| --- | --- |
+| ![](docs/screenshots/desktop-atlas.jpg) | ![](docs/screenshots/desktop-atlas-chunk.jpg) |
+
+| 移动端问学 | （更多截图见 `DELIVERY.md` 的索引；原始 2×DPR 图不入库） |
+| --- | --- |
+| ![](docs/screenshots/mobile-inquiry.jpg) |  |
 
 ## 技术栈
 
@@ -83,12 +113,12 @@
 | Agent 编排 | LangGraph |
 | 模型 | DashScope（Qwen 对话 / embedding / reranker）、OpenAI |
 | 接口层 | FastAPI + Uvicorn（SSE 流式） |
-| 前端 | Vue 3 + Vite 6 + Element Plus + markdown-it / highlight.js |
+| 前端 | Vue 3.5 + Vite 6 + vue-router 4 + Pinia 3 + markdown-it / highlight.js + Three.js（仅星图路由懒加载） |
 | 会话存储 | PostgreSQL 16 + langgraph-checkpoint-postgres |
 | 向量库 | Milvus 2.5（etcd / MinIO / Attu），稠密 + BM25 稀疏 |
 | 文档解析 | MinerU |
 | 联网检索 | Firecrawl |
-| 前端动效 | WebGL 着色器（液态玻璃、粒子漂移） |
+| 前端视觉 | CSS 设计令牌（纸本 / 星夜）、Instrument Serif + JetBrains Mono、Three.js 自定义着色器星图 |
 | 包管理 | uv（Python 3.13+）/ npm |
 | 容器编排 | Docker Compose |
 
@@ -139,15 +169,20 @@ Graduation-Project/
 │   ├── import_academic_calendar.py   # 校历 YAML → PostgreSQL
 │   └── academic_calendar_schema.sql  # 校历表结构
 ├── utils/                      # 日志、图片编码、提示词加载、md 转换等
-├── frontend/                   # Vue 3 前端
+├── frontend/                   # Vue 3 前端（星野台）
 │   ├── src/
-│   │   ├── App.vue             # 单页主界面：会话列表、消息流、输入区
-│   │   ├── api/                # 会话、SSE、记忆、知识库请求
-│   │   ├── components/         # KnowledgePage、Logo、玻璃与粒子组件
-│   │   ├── glass/              # 液态玻璃 WebGL 着色器与组合式函数
-│   │   ├── directives/         # glassTilt 交互指令
-│   │   └── utils/markdown.js   # markdown-it + highlight.js（禁用原始 HTML）
-│   ├── vite.config.js          # /api、/uploads 代理到 8002
+│   │   ├── main.js             # 应用入口（Pinia + Router）
+│   │   ├── App.vue             # 外壳：竖排导航、会话档案、命令面板、Toast / 确认框
+│   │   ├── router/             # /inquiry/:sessionId? /archive/:fileMd5? /memory /atlas/:chunkId?
+│   │   ├── views/              # InquiryView（问学）/ ArchiveView（典藏）/ MemoryView（记忆）/ AtlasView（星野）
+│   │   ├── components/         # shell（导航、档案、命令面板）、chat（轮次、轨迹、出处、书写台）、ui、archive
+│   │   ├── stores/             # conversations（按会话并行的运行态）、library、memory、atlas、ui
+│   │   ├── api/                # 会话、SSE 解析、知识库、上传、记忆
+│   │   ├── three/starfield.js  # 星图渲染引擎（Points 着色器、星链、标签、拾取、相机）
+│   │   ├── styles/             # tokens（纸本 / 星夜）、base、layout、markdown
+│   │   └── utils/              # markdown、数字与时间、引用归并、轮次配对
+│   ├── tests/                  # Vitest（58 例）
+│   ├── vite.config.js          # /api、/uploads 代理到 8002；three 单独分包
 │   └── package.json
 ├── docker-compose.yml          # etcd / MinIO / Milvus / Attu / PostgreSQL
 ├── pyproject.toml              # 后端直接依赖
@@ -262,10 +297,12 @@ uv run uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload
 ```bash
 cd frontend
 npm ci
-npm run dev
+npm run dev            # http://localhost:5173
 ```
 
-打开 http://127.0.0.1:5173 。Vite 已把 `/api` 与 `/uploads` 代理到 `127.0.0.1:8002`，无需额外配置跨域。
+打开终端里打印的地址（默认 http://localhost:5173，本次交付在 5180 端口验收：`npm run dev -- --port 5180 --strictPort`）。Vite 已把 `/api` 与 `/uploads` 代理到 `127.0.0.1:8002`，无需额外配置跨域；后端地址不同时用 `JXNU_API=http://host:port npm run dev`。生产构建用 `npm run build`，Windows 下需先把 `TEMP`/`TMP` 指到可写目录（见 [`frontend/README.md`](frontend/README.md)）。
+
+四个页面：`/inquiry`（问学）、`/archive`（典藏）、`/memory`（记忆）、`/atlas`（星野）。星图首次打开会向后端请求一次布局（约 2 秒），之后按指纹命中磁盘缓存。
 
 ### 6. 首次准备校历与知识库
 
@@ -301,11 +338,15 @@ npm run dev
 | PUT | `/api/memories/{id}` | 编辑自己的记忆，请求体 `{content}` |
 | DELETE | `/api/memories/{id}` | 删除自己的记忆 |
 | GET | `/api/knowledge/documents` | 文档搜索、格式筛选、分页与排序 |
+| GET | `/api/knowledge/overview` | 知识库总览：文档数、分片总数、各状态计数、占用字节、最近入库时间（新增，向后兼容） |
 | GET | `/api/knowledge/documents/{file_md5}/chunks` | 查看文档切片 |
 | POST | `/api/knowledge/upload` | 上传文档，返回 202 和 pending 状态，单文件上限 50MB |
 | GET | `/api/knowledge/jobs/{file_md5}` | 查询入库状态和阶段 |
 | DELETE | `/api/knowledge/documents/{file_md5}` | 删除文档及向量块，处理中返回 409 |
 | POST | `/api/knowledge/sync` | 从 Milvus 补登记并清理不存在的记录；会修改登记表 |
+| GET | `/api/knowledge/starmap` | 知识星图元数据：指纹、算法说明、每篇文档的质心与半径、分片与连边计数（新增） |
+| GET | `/api/knowledge/starmap/points` | 分页读取分片坐标与正文，`offset` / `limit`（≤800，默认 400），可 `force=true` 重建；返回 `next_offset`（新增） |
+| GET | `/api/knowledge/starmap/edges` | 语义连边（跨文档余弦相似度 kNN，阈值 0.75，最多 900 条）与算法说明（新增） |
 
 `/api/chat` 收到的 `images` 是上传接口返回的相对路径（`data/uploads/xxx.png`）。服务端会 `resolve()` 后校验必须落在上传目录内，再编码成 data URL 送模型；落库和回显用 `/uploads/xxx.png`。两个地址分开是因为模型要能读文件、浏览器要能直接加载。
 
@@ -332,12 +373,16 @@ uv run --locked python -m scripts.import_academic_calendar
 
 ## 已知限制与下一步
 
-- 会话、后台记忆及知识库同步互斥按单进程部署设计，不支持依靠进程内锁实现多 worker 互斥；整轮超时和主动取消信号尚未贯通。
+- 会话、后台记忆及知识库同步互斥按单进程部署设计，不支持依靠进程内锁实现多 worker 互斥；服务端未实现逐轮取消信号，前端「停止生成」是关闭请求流，未保存的回答不会落库。
 - 业务连接在图流执行期间持有，结束后先归还再执行后台记忆；整体流式并发与连接池容量仍需真实服务验证。
 - 已保存底部来源快照，但尚未做正文逐句引用映射；来源未全面建模日期与适用范围。历史未记录的来源无法自动补回。
+- 工具轨迹与思考过程只在本次运行期间可见：`complete_turn` 只落库正文、来源与 token 用量，历史消息不保存 `tool_calls` 与推理。
 - 检索阈值 0.3 尚未用真实标注集校准，时效过滤与版本替换未形成闭环。
 - PostgreSQL 与 Milvus 没有跨库事务；失败任务可能留下部分向量，失败重试会按哈希清理重建，也可手动删除该失败文档。BackgroundTasks 不是持久化任务队列，入库中断后需重传，后台记忆中断后不恢复。
 - 历史压缩只缩小模型输入窗口，完整消息仍保存在图状态与业务历史中；上下文窗口默认值未随模型自动匹配。
+- 星图布局（质心 MDS + 径向压缩 + 星群分离 + 文档内 PCA）只是便于观看的空间整理：星体归属、`chunk_index` 顺序与语义连边是真实的，坐标距离不构成知识关联。语义连边取跨文档余弦 ≥ 0.75 的前 900 条，是启发式而非人工标注的关系。
+- 星图每次打开最多 1759 个点（当前库规模）一次读完；更大规模需要分页与按需渲染，接口已支持 `offset/limit`（前端已按 400/页分批绘制）。
+- 星图选中星体只做轻微推近（当前距离 ×0.88），以免旁边星体出画、无法连续切换；「复位视角」回到首帧取景机位而不是重新拟合一个近似机位。文档名标签在窄屏（< 900px）默认收起，可在抬头开关打开。
 - 当前下一步进行真实依赖下的稳定性与来源/重新生成验收，再推进逐句引用映射、评测、真实登录与角色权限、反馈功能。
 
 ## 回归测试
@@ -346,31 +391,18 @@ uv run --locked python -m scripts.import_academic_calendar
 
 ```bash
 uv run --locked python -m unittest discover -s tests -v
-node --test tests/chat_stream.test.mjs tests/sources.test.mjs tests/generation.test.mjs
 ```
 
-测试不需要数据库或模型密钥，使用模拟依赖验证生命周期、并发、事务调用边界及前端 SSE 处理；不代替真实数据库事务和向量库一致性验收。业务运行仍需按上方手动验收步骤检查。
-
-浏览器模拟回归：先在 `frontend/` 执行 `npm run dev -- --host 127.0.0.1 --port 5174 --strictPort`，然后在项目根目录执行以下命令（需要可用的 Chromium / Playwright CLI；不增加项目依赖）：
+前端单元测试在 `frontend/` 执行：
 
 ```bash
-npx --yes --package @playwright/cli playwright-cli -s=message-sources open about:blank
-npx --yes --package @playwright/cli playwright-cli -s=message-sources run-code --filename tests/browser_sources.cjs
-npx --yes --package @playwright/cli playwright-cli -s=message-sources run-code --filename tests/browser_layout.cjs
-npx --yes --package @playwright/cli playwright-cli -s=message-sources close
+npm test            # vitest run，58 例
+npm run build       # 生产构建（Windows 需先把 TEMP 指到可写目录，见 frontend/README.md）
 ```
 
-脚本拦截所有 `/api/` 请求，复制写入测试替身，不调用真实模型或修改真实业务数据。模拟失败时控制台会出现预期的 500/404/503 请求记录；脚本返回 `PASS` 才表示断言通过。
+后端 79 例、前端 58 例均使用模拟依赖，不需要数据库或模型密钥，验证生命周期、并发、事务调用边界、SSE 解析、Markdown 渲染、引用归并与星图 store 的筛选 / 搜索逻辑；不代替真实数据库事务和向量库一致性验收。业务运行仍需按上方手动验收步骤检查。
 
-逐段流式等待体验回归：另开一个终端，在项目根目录执行 `node tests/waiting_mock_server.cjs`，启动只监听 `127.0.0.1:5175` 的本地 SSE 测试服务；Vite 仍使用 5174。然后执行：
-
-```bash
-npx --yes --package @playwright/cli playwright-cli -s=message-waiting open about:blank
-npx --yes --package @playwright/cli playwright-cli -s=message-waiting run-code --filename tests/browser_waiting.cjs
-npx --yes --package @playwright/cli playwright-cli -s=message-waiting close
-```
-
-该脚本仅将聊天请求转发到本地模拟服务，其他业务请求均拦截，并使用浏览器模拟时钟验证长等待。测试后在模拟服务及 Vite 终端按 Ctrl+C 关闭；不新增测试依赖。
+浏览器回归脚本（历史）：`tests/browser_*.cjs` 与 `tests/waiting_mock_server.cjs` 是旧版前端（`.msg-*`、`.knowledge-*` 选择器）的 Playwright CLI 脚本，未纳入仓库；第五轮的联调脚本是本地工作区 `_devtools/` 下的 Playwright Python 脚本（`flow_chat.py`、`flow_archive.py`、`flow_atlas.py`、`flow_theme.py`、`flow_mobile.py` 等），逐项结果记录在 [`DELIVERY.md`](DELIVERY.md)。
 
 ## 说明
 
@@ -381,6 +413,11 @@ npx --yes --package @playwright/cli playwright-cli -s=message-waiting close
 - 首次运行时 `postgres_checkpointer` 会自动创建 LangGraph 检查点表，可重复调用
 - 会话表通过 `setup()` 幂等建表与补列，旧库会按 `legacy_user_id` 回填归属
 - `api/demo.py` 是 FastAPI 语法练习，与业务无关，可忽略
+
+## 文档
+
+- [`DELIVERY.md`](DELIVERY.md)：交付报告——功能对照、接口契约、真实联调记录、构建与测试、性能与兼容性、截图索引、未解决问题与风险。
+- [`frontend/README.md`](frontend/README.md)：前端开发说明——目录结构、设计令牌、接口契约、测试与 Windows 构建注意事项。
 
 ## License
 

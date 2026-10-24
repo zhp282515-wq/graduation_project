@@ -6,7 +6,7 @@ RAG-1 只做稠密向量检索；BM25 稀疏索引、混合检索、重排属于
 """
 
 import os
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -316,6 +316,47 @@ class MilvusVectorStore:
         )
         return sorted(rows, key=lambda r: r.get("chunk_index", 0))
 
+    def iter_all_chunks(
+        self,
+        *,
+        batch_size: int = 1000,
+        include_vector: bool = False,
+    ) -> Iterator[dict[str, Any]]:
+        """遍历整个集合的分片（知识星图构建用）。
+
+        用 query_iterator 而不是一次性 query(limit=16384)：集合可能远超单次
+        query 的返回上限，迭代器逐批取，内存占用与总量无关。返回顺序不保证，
+        调用方需要自己按 (file_md5, chunk_index) 排序。
+        """
+        fields = [
+            "id",
+            "file_md5",
+            "file_name",
+            "file_type",
+            "file_size",
+            "chunk_index",
+            "text",
+            "section_path",
+            "block_type",
+            "page",
+        ]
+        if include_vector:
+            fields.append("vector")
+        iterator = self.client.query_iterator(
+            collection_name=self.collection,
+            batch_size=batch_size,
+            filter="chunk_index >= 0",
+            output_fields=fields,
+        )
+        try:
+            while True:
+                batch = iterator.next()
+                if not batch:
+                    break
+                for row in batch:
+                    yield row
+        finally:
+            iterator.close()
 
 
 if __name__ == "__main__":

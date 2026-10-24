@@ -145,6 +145,29 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.json()["items"][0]["chunk_id"], "stable-uuid")
         self.knowledge.list_chunks.assert_called_once_with("hash", offset=20, limit=20)
 
+    def test_knowledge_overview_aggregates_registry_counts(self):
+        self.kb_repo.count.return_value = 2
+        self.kb_repo.overview.return_value = {
+            "documents": 2, "chunks": 41, "ready": 2, "processing": 0,
+            "pending": 0, "failed": 0, "bytes": 2048, "latest_at": "2024-05-01T10:00:00+00:00",
+        }
+        self.kb_repo.facets.return_value = {"all": 2, "md": 1, "doc": 1, "docx": 0, "pdf": 0, "txt": 0}
+        response = self.client().get("/api/knowledge/overview")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["documents"], 2)
+        self.assertEqual(body["chunks"], 41)
+        self.assertEqual(body["facets"]["md"], 1)
+        # 总览与列表共用同一份登记表，不得额外触发 Milvus 扫描
+        self.kb_repo.overview.assert_called_once_with()
+        self.knowledge.list_documents.assert_not_called()
+
+    def test_knowledge_overview_returns_503_when_service_unavailable(self):
+        self.factory.side_effect = RuntimeError("Milvus unavailable")
+        response = self.client().get("/api/knowledge/overview")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("知识库未就绪", response.json()["detail"])
+
     def test_concurrent_http_send_accepts_only_one_request(self):
         client = self.client()
         entered, release = threading.Event(), threading.Event()

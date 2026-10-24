@@ -32,6 +32,7 @@ from session.memory_jobs import MemoryJobs
 from api.streaming import ChatStreamingResponse
 from knowledge.documents import KbDocumentRepository
 from knowledge.server import KnowledgeService
+from knowledge.starmap import EDGE_MAX, POINT_PAGE_DEFAULT, POINT_PAGE_MAX, StarMapBuilder
 from utils.logger_tool import logger
 from utils.md_to_content_list import md_to_content_list
 from agent.runtime import AgentRuntime
@@ -140,6 +141,8 @@ async def lifespan(app: FastAPI):
 
         app.state.runs = KeyedLocks()
         app.state.pg_pool = pg_pool
+        # 知识星图：知识库的真实分片只读视图，构建在首次访问时触发并落盘缓存。
+        app.state.starmap = StarMapBuilder(kb_service) if kb_service else None
         app.state.runtime = AgentRuntime(
             model = DashScopeProvider(model="qwen3.8-flash"),
             tools = [
@@ -447,6 +450,23 @@ def _bootstrap_registry(repo: KbDocumentRepository, service: KnowledgeService) -
             logger.info("知识库登记表已回填 %d 份文档", len(docs))
 
 
+@app.get("/api/knowledge/overview")
+def knowledge_overview(
+        service: KnowledgeService = Depends(get_knowledge),
+        repo: KbDocumentRepository = Depends(get_kb_repo),
+):
+    """知识库总量统计 —— 供前端抬头显示真实文档数与分片总数。
+
+    分页接口只返回当前页，前端无法据此得出全局数量；这里一次性给聚合值。
+    """
+    if repo.count() == 0:
+        _bootstrap_registry(repo, service)
+
+    data = repo.overview()
+    data["facets"] = repo.facets("")
+    return data
+
+
 @app.get("/api/knowledge/documents")
 def list_knowledge_documents(
         q: str = "",
@@ -598,6 +618,50 @@ def delete_knowledge_document(
                 logger.warning("删除源文件失败：%s", path, exc_info=True)
 
         return {"deleted": file_md5, "chunks_deleted": chunks}
+
+
+# ============================================================
+# 知识星图
+# ============================================================
+# 只读视图，不写任何表：星体就是 Milvus 里的真实分片，坐标在首次访问时算出并缓存。
+# 三组接口分开，是因为星图里分片数量远大于文档数量 —— meta（文档/算法元信息）
+# 小，points 需要分页，edges 只在需要时才取。
+
+def get_starmap(request: Request) -> StarMapBuilder:
+    builder = getattr(request.app.state, "starmap", None)
+    if builder is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"知识星图未就绪：{getattr(request.app.state, 'kb_error', '知识库尚未加载')}",
+        )
+    return builder
+
+
+@app.get("/api/knowledge/starmap")
+def starmap_meta(
+        force: bool = False,
+        builder: StarMapBuilder = Depends(get_starmap),
+):
+    return builder.meta(force=force)
+
+
+@app.get("/api/knowledge/starmap/points")
+def starmap_points(
+        offset: int = Query(0, ge=0),
+        limit: int = Query(POINT_PAGE_DEFAULT, ge=1, le=POINT_PAGE_MAX),
+        force: bool = False,
+        builder: StarMapBuilder = Depends(get_starmap),
+):
+    return builder.points(offset=offset, limit=limit, force=force)
+
+
+@app.get("/api/knowledge/starmap/edges")
+def starmap_edges(
+        limit: int = Query(EDGE_MAX, ge=1, le=EDGE_MAX),
+        force: bool = False,
+        builder: StarMapBuilder = Depends(get_starmap),
+):
+    return builder.edges(limit=limit, force=force)
 
 
 def run_ingest_job(

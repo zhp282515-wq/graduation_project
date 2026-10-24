@@ -31,3 +31,19 @@ api/demo.py
 
 # MinerU 解析产物（含原始文档与图片），本地可重新生成
 knowledge/parser_data/
+
+# 本地联调脚本与验收素材（依赖本机浏览器 / 服务，不入库）
+_devtools/
+.playwright-cli/
+
+# 重构前的旧前端备份（Git 历史里已有旧实现）
+frontend/.legacy-src/
+
+# 评测语料含知识库原文，与 data/ 同策略不公开
+evaluation/
+
+# 旧版前端的浏览器回归脚本与 Node 测试（仅本地保留，选择器已不适用）
+tests/browser_*.cjs
+tests/waiting_mock_server.cjs
+tests/generation.test.mjs
+tests/sources.test.mjs

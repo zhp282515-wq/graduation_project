@@ -1,0 +1,134 @@
+﻿/* ============================================================
+   星野台 · 设计令牌
+   两套材质共用一套尺度与语义：paper（纸本，默认）与 night（星夜）。
+   组件只允许消费这里的变量，颜色与字号不允许散落在组件里。
+   ============================================================ */
+
+:root {
+  /* 字体 */
+  --font-display: "Instrument Serif", "Songti SC", "Source Han Serif SC", "Noto Serif SC", "SimSun", serif;
+  --font-serif: "Songti SC", "Source Han Serif SC", "Noto Serif SC", "SimSun", serif;
+  --font-ui: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Microsoft YaHei UI", "Noto Sans SC", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SFMono-Regular",
+    Consolas, monospace;
+
+  /* 字号阶梯 */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15.5px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+  --text-4xl: 48px;
+  --text-5xl: 64px;
+
+  /* 尺度与留白 */
+  --rail-w: 78px;
+  --gutter: clamp(18px, 3vw, 44px);
+  --maxw: 1280px;
+  --reading-w: 720px;
+
+  /* 圆角 */
+  --r-xs: 3px;
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 20px;
+  --r-full: 999px;
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-fast: 130ms;
+  --t-base: 220ms;
+  --t-slow: 480ms;
+
+  /* 层级 */
+  --z-sticky: 20;
+  --z-drawer: 60;
+  --z-sheet: 70;
+  --z-toast: 90;
+  --z-confirm: 95;
+
+  /* 纸张材质 */
+  --bg: #f2eee4;
+  --bg-deep: #eae4d7;
+  --surface: #fbf8f1;
+  --surface-2: #f6f1e6;
+  --surface-3: #ece5d6;
+  --surface-glass: rgba(251, 248, 241, 0.82);
+  --ink: #1c1813;
+  --ink-2: #4b4339;
+  --ink-3: #615749;
+  --ink-4: #746a5b;
+  --line: rgba(28, 24, 19, 0.13);
+  --line-strong: rgba(28, 24, 19, 0.26);
+  --accent: #a3352a;
+  --accent-hover: #8d2b21;
+  --accent-ink: #fff8ee;
+  --accent-soft: rgba(163, 53, 42, 0.09);
+  --accent-line: rgba(163, 53, 42, 0.32);
+  --ok: #37624a;
+  --ok-soft: rgba(55, 98, 74, 0.1);
+  --warn: #85642a;
+  --warn-soft: rgba(133, 100, 42, 0.1);
+  --err: #97281f;
+  --err-soft: rgba(151, 40, 31, 0.09);
+  --shadow-sheet: 0 32px 80px -44px rgba(38, 28, 16, 0.62), 0 2px 0 rgba(255, 255, 255, 0.5) inset;
+  --shadow-float: 0 18px 44px -30px rgba(38, 28, 16, 0.5);
+  --grain-opacity: 0.05;
+  --grain-blend: multiply;
+  --chart-line: rgba(28, 24, 19, 0.22);
+  --scroll-thumb: rgba(28, 24, 19, 0.2);
+  --code-bg: #efe8da;
+  --code-ink: #3c2f24;
+  --star-a: #a3352a;
+  --star-b: #2f5d63;
+  --star-c: #7a5a2e;
+
+  color-scheme: light;
+}
+
+/* 星野页会临时把整站带入夜色（data-force-night），离开即恢复用户自己的选择。 */
+:root[data-theme="night"],
+:root[data-force-night] {
+  --bg: #07070b;
+  --bg-deep: #040407;
+  --surface: rgba(20, 21, 31, 0.78);
+  --surface-2: rgba(27, 28, 41, 0.72);
+  --surface-3: rgba(38, 40, 56, 0.7);
+  --surface-glass: rgba(12, 13, 20, 0.72);
+  --ink: #ece6d8;
+  --ink-2: #b6afa1;
+  --ink-3: #9c9587;
+  --ink-4: #8b8476;
+  --line: rgba(236, 230, 216, 0.13);
+  --line-strong: rgba(236, 230, 216, 0.28);
+  --accent: #e2684c;
+  --accent-hover: #ef7d61;
+  --accent-ink: #140a06;
+  --accent-soft: rgba(226, 104, 76, 0.12);
+  --accent-line: rgba(226, 104, 76, 0.38);
+  --ok: #7fb894;
+  --ok-soft: rgba(127, 184, 148, 0.12);
+  --warn: #d8b36a;
+  --warn-soft: rgba(216, 179, 106, 0.12);
+  --err: #e67a63;
+  --err-soft: rgba(230, 122, 99, 0.12);
+  --shadow-sheet: 0 40px 120px -50px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(236, 230, 216, 0.05) inset;
+  --shadow-float: 0 24px 60px -34px rgba(0, 0, 0, 0.85);
+  --grain-opacity: 0;
+  --grain-blend: screen;
+  --chart-line: rgba(236, 230, 216, 0.2);
+  --scroll-thumb: rgba(236, 230, 216, 0.18);
+  --code-bg: rgba(255, 255, 255, 0.045);
+  --code-ink: #dfd8c8;
+  --star-a: #e2684c;
+  --star-b: #6fa8b0;
+  --star-c: #d3a24e;
+
+  color-scheme: dark;
+}

@@ -230,6 +230,39 @@ class KbDocumentRepository:
             # 连接池统一配了 dict_row，这里按列名取；兼容元组行也顺手处理
             return int(row["n"]) if isinstance(row, dict) else int(row[0])
 
+    def overview(self) -> dict[str, Any]:
+        """知识库总览：文档数、分片总数、状态分布、最近入库时间。
+
+        分片总数只能求和登记表里的 chunk_count —— Milvus 侧逐文档 count(*) 太慢，
+        登记表在 mark_ready 时写入的正是该文档真实入库的分片数。
+        """
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                    count(*) AS documents,
+                    coalesce(sum(chunk_count), 0) AS chunks,
+                    count(*) FILTER (WHERE status = 'ready')      AS ready,
+                    count(*) FILTER (WHERE status = 'processing') AS processing,
+                    count(*) FILTER (WHERE status = 'pending')    AS pending,
+                    count(*) FILTER (WHERE status = 'failed')     AS failed,
+                    coalesce(sum(file_size), 0) AS bytes,
+                    max(coalesce(ingested_at, created_at)) AS latest_at
+                FROM kb_documents
+                """
+            )
+            row = cur.fetchone()
+        return {
+            "documents": int(row["documents"] or 0),
+            "chunks": int(row["chunks"] or 0),
+            "ready": int(row["ready"] or 0),
+            "processing": int(row["processing"] or 0),
+            "pending": int(row["pending"] or 0),
+            "failed": int(row["failed"] or 0),
+            "bytes": int(row["bytes"] or 0),
+            "latest_at": row["latest_at"].isoformat() if row["latest_at"] else None,
+        }
+
     def reconcile_after_restart(self) -> int:
         """启动时把残留的在途任务标成失败 —— 后台线程随进程一起没了。"""
         with self._conn.cursor() as cur:
