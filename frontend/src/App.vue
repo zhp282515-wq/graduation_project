@@ -1,19 +1,30 @@
 <script setup>
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import BrandLogo from './components/BrandLogo.vue'
 import KnowledgePage from './components/KnowledgePage.vue'
+import MessageActions from './components/MessageActions.vue'
+import SourceDrawer from './components/SourceDrawer.vue'
+import GenerationStatus from './components/GenerationStatus.vue'
+import { createProgress, advanceProgress, finishProgress, recordMeasurement } from './utils/generation.js'
 import ParticleDrift from './components/ParticleDrift.vue'
 import { listSessions, createSession, getMessages, deleteSession } from './api/sessions'
-import { streamChat } from './api/chat.js'
-import { uploadImage } from './api/client'
+import { streamChat, regenerateChat } from './api/chat.js'
+import { uploadImage, USER_ID } from './api/client'
 import { listMemories, updateMemory, deleteMemory } from './api/memories'
 import { renderMarkdown } from './utils/markdown'
 import 'highlight.js/styles/github.css'
 
-const inputText = ref('')
 const sessions = ref([])
 const currentSessionId = ref(null)
+const creatingSession = ref(false)
 const messageListRef = ref(null)
+const drafts = reactive(new Map())
+function draftOf() {
+  const key = currentSessionId.value || 'new'
+  if (!drafts.has(key)) drafts.set(key, { text: '', files: [] })
+  return drafts.get(key)
+}
+const inputText = computed({ get: () => draftOf().text, set: value => { draftOf().text = value } })
 
 /**
  * 每个会话独立的消息状态。
@@ -22,10 +33,43 @@ const messageListRef = ref(null)
  */
 const cache = reactive(new Map())
 const controllers = new Map()
+const unreadStorageKey = `fanfan:unread-sessions:${USER_ID}`
+const unreadSessions = reactive(new Set(loadUnreadSessions()))
+
+function loadUnreadSessions() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(unreadStorageKey) || '[]')
+    return Array.isArray(stored) ? stored.filter((id) => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function setSessionUnread(id, unread) {
+  if (unread) unreadSessions.add(id)
+  else unreadSessions.delete(id)
+  try {
+    localStorage.setItem(unreadStorageKey, JSON.stringify([...unreadSessions]))
+  } catch { /* 存储不可用时，本次页面中的状态仍然有效 */ }
+}
+
+function isSessionVisible(id) {
+  return id === currentSessionId.value && currentView.value === 'chat' && document.visibilityState === 'visible'
+}
+
+function markCurrentSessionRead() {
+  const id = currentSessionId.value
+  if (id && isSessionVisible(id) && unreadSessions.has(id)) setSessionUnread(id, false)
+}
+
+function sessionDotLabel(id) {
+  if (isStreaming(id)) return '正在生成'
+  return unreadSessions.has(id) ? '有新回复，尚未查看' : '无未读回复'
+}
 
 function stateOf(sid) {
   if (!cache.has(sid)) {
-    cache.set(sid, reactive({ messages: [], streaming: false }))
+    cache.set(sid, reactive({ messages: [], streaming: false, followLatest: true, scrollTop: 0, progress: null }))
   }
   return cache.get(sid)
 }
@@ -186,12 +230,38 @@ function isStreaming(sid) {
   return cache.get(sid)?.streaming ?? false
 }
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
+  const sid = currentSessionId.value
+  const st = currentState.value
+  if (force && st) st.followLatest = true
   nextTick(() => {
+    if (sid !== currentSessionId.value || (!force && st?.followLatest === false)) return
     const el = messageListRef.value
     if (el) el.scrollTop = el.scrollHeight
   })
 }
+
+function onMessageScroll() {
+  const el = messageListRef.value, st = currentState.value
+  if (!el || !st) return
+  st.scrollTop = el.scrollTop
+  st.followLatest = el.scrollHeight - el.scrollTop - el.clientHeight < 56
+}
+
+function restoreChatScroll() {
+  nextTick(() => {
+    const el = messageListRef.value, st = currentState.value
+    if (el && st) el.scrollTop = st.followLatest ? el.scrollHeight : st.scrollTop
+  })
+}
+
+let messageResizeObserver
+watch(messageListRef, element => {
+  messageResizeObserver?.disconnect()
+  if (!element) return
+  messageResizeObserver = new ResizeObserver(() => scrollToBottom())
+  messageResizeObserver.observe(element)
+})
 
 async function refreshSessions() {
   try {
@@ -207,6 +277,7 @@ async function newSession() {
     const s = await createSession()
     currentSessionId.value = s.id
     stateOf(s.id)            // 复用空会话时保留其已有状态
+    markCurrentSessionRead()
     await refreshSessions()
   } catch (e) {
     console.error('新建会话失败:', e)
@@ -215,22 +286,26 @@ async function newSession() {
 }
 
 async function selectSession(id) {
-  if (id === currentSessionId.value) return
+  if (id === currentSessionId.value) {
+    markCurrentSessionRead()
+    return
+  }
   currentSessionId.value = id
 
   // 已有本地状态（含正在生成的）直接用，避免覆盖
   if (cache.has(id)) {
-    scrollToBottom()
+    markCurrentSessionRead()
+    restoreChatScroll()
     return
   }
 
   try {
     const history = await getMessages(id)
     stateOf(id).messages = history.map((m) => ({
-      role: m.role,
-      content: m.content,
-      images: m.images ?? undefined,
+      ...m,
+      clientId: `message-${m.id}`,
     }))
+    markCurrentSessionRead()
     scrollToBottom()
   } catch (e) {
     console.error('加载消息失败:', e)
@@ -239,39 +314,52 @@ async function selectSession(id) {
 }
 
 async function send() {
-  const text = inputText.value.trim()
-  const readyImages = pickedFiles.value.filter((f) => f.status === 'done')
-  if ((!text && !readyImages.length) || sending.value || uploading.value) return
+  const sourceDraft = draftOf()
+  const text = sourceDraft.text.trim()
+  const readyImages = sourceDraft.files.filter((f) => f.status === 'done')
+  let sid = currentSessionId.value
+  if ((!text && !readyImages.length) || sending.value || uploading.value || creatingSession.value) return
+  const requestedAt = performance.now()
 
   // 没有会话时自动创建一个，让用户可以直接开始提问
-  if (!currentSessionId.value) {
+  if (!sid) {
+    creatingSession.value = true
     try {
       const s = await createSession()
-      currentSessionId.value = s.id
+      sid = s.id
+      if (drafts.has('new')) { drafts.set(s.id, drafts.get('new')); drafts.delete('new') }
+      if (!currentSessionId.value) currentSessionId.value = s.id
       stateOf(s.id)
       await refreshSessions()
     } catch (e) {
       console.error('创建会话失败:', e)
       toast(`创建会话失败：${e.message}`, 'error')
       return
+    } finally {
+      creatingSession.value = false
     }
   }
 
-  const sid = currentSessionId.value
   const st = stateOf(sid)
   if (st.streaming) return
 
   const imagePaths = readyImages.map((f) => f.path)
   const imageUrls = readyImages.map((f) => f.url)
 
-  inputText.value = ''
-  pickedFiles.value = []
+  if (sourceDraft.text.trim() === text) sourceDraft.text = ''
+  const sentImages = new Set(readyImages.map(file => file.id))
+  sourceDraft.files = sourceDraft.files.filter(file => !sentImages.has(file.id))
   st.streaming = true
+  setSessionUnread(sid, false)
 
-  st.messages.push({ role: 'user', content: text, images: imageUrls })
-  const reply = reactive({ role: 'assistant', content: '', streaming: true })
+  const question = reactive({ clientId: crypto.randomUUID(), role: 'user', content: text, images: imageUrls })
+  st.messages.push(question)
+  const reply = reactive({ clientId: crypto.randomUUID(), role: 'assistant', content: '', streaming: true, sources: [] })
+  const progress = reactive(createProgress(requestedAt))
+  reply.progress = progress
+  st.progress = progress
   st.messages.push(reply)
-  scrollToBottom()
+  if (currentSessionId.value === sid) scrollToBottom(true)
 
   const controller = new AbortController()
   controllers.set(sid, controller)
@@ -283,19 +371,20 @@ async function send() {
       images: imagePaths,
       signal: controller.signal,
       onEvent(event) {
+        advanceProgress(progress, event)
+        if (currentSessionId.value === sid) scrollToBottom()
         switch (event.type) {
+          case 'run_started':
+            question.id = event.user_message_id
+            reply.reply_to_message_id = event.user_message_id
+            break
           case 'text_delta':
             reply.content += event.content || ''
-            if (currentSessionId.value === sid) scrollToBottom()
-            break
-          case 'tool_started':
-            reply.toolName = event.name
-            break
-          case 'tool_finished':
-            reply.toolName = null
             break
           case 'done':
+            applyFinalAnswer(reply, event.final_answer)
             reply.streaming = false
+            setSessionUnread(sid, !isSessionVisible(sid))
             break
           case 'run_failed':
             reply.streaming = false
@@ -305,6 +394,7 @@ async function send() {
       },
     })
   } catch (e) {
+    finishProgress(progress, e.name === 'AbortError' ? 'cancelled' : 'failed')
     if (e.name === 'AbortError') {
       reply.streaming = false
     } else {
@@ -312,6 +402,8 @@ async function send() {
       reply.error = e.message
     }
   } finally {
+    finishProgress(progress, reply.error ? 'failed' : 'cancelled')
+    recordMeasurement(progress)
     reply.streaming = false
     reply.toolName = null
     st.streaming = false
@@ -319,6 +411,110 @@ async function send() {
     // 首条消息会自动改标题，刷新列表
     await refreshSessions()
   }
+}
+
+function applyFinalAnswer(reply, final) {
+  if (!final) return
+  reply.content = final.content ?? reply.content
+  reply.id = final.message_id ?? reply.id
+  reply.reply_to_message_id = final.reply_to_message_id ?? reply.reply_to_message_id
+  reply.sources = final.sources ?? []
+}
+
+const sourceMessage = ref(null)
+const sourceSessionId = ref(null)
+const sourceOpen = ref(false)
+const sourceReturnFocus = ref(null)
+const documentTarget = ref(null)
+let sourceScrollTop = 0
+
+function openSources(message, trigger) {
+  sourceMessage.value = message
+  sourceSessionId.value = currentSessionId.value
+  sourceReturnFocus.value = trigger
+  sourceScrollTop = messageListRef.value?.scrollTop || 0
+  sourceOpen.value = true
+}
+
+function viewSourceDocument(source) {
+  sourceOpen.value = false
+  documentTarget.value = { ...source, requestId: crypto.randomUUID() }
+  switchView('kb', { fromSource: true })
+}
+
+async function returnToSource() {
+  if (sourceSessionId.value !== currentSessionId.value) await selectSession(sourceSessionId.value)
+  currentView.value = 'chat'
+  markCurrentSessionRead()
+  await nextTick()
+  if (messageListRef.value) messageListRef.value.scrollTop = sourceScrollTop
+  sourceOpen.value = true
+}
+
+async function regenerateReply(reply) {
+  const sid = currentSessionId.value
+  const st = stateOf(sid)
+  if (st.streaming || !reply.id || !reply.reply_to_message_id) return
+  const backup = { content: reply.content, sources: reply.sources, error: reply.error }
+  const progress = reactive(createProgress())
+  reply.progress = progress
+  st.progress = progress
+  const hasLater = st.messages.indexOf(reply) < st.messages.length - 1
+  if (sourceMessage.value === reply) sourceOpen.value = false
+  st.streaming = true
+  setSessionUnread(sid, false)
+  Object.assign(reply, { error: null, streaming: true, regenerating: true, regenerationPending: true,
+    regenerationNote: hasLater ? '仅更新此条回答，后续对话保持不变' : '正在重新生成' })
+  const controller = new AbortController()
+  controllers.set(sid, controller)
+  let completed = false
+  try {
+    await regenerateChat({ sessionId: sid, messageId: reply.id, signal: controller.signal,
+      onEvent(event) {
+        advanceProgress(progress, event)
+        if (event.type === 'text_delta') {
+          if (reply.regenerationPending && event.content?.trim()) {
+            reply.content = ''
+            reply.sources = []
+            reply.regenerationPending = false
+          }
+          if (!reply.regenerationPending) reply.content += event.content || ''
+        }
+        else if (event.type === 'run_failed') throw new Error(event.message || '重新生成失败')
+        else if (event.type === 'done') {
+          applyFinalAnswer(reply, event.final_answer)
+          completed = true
+          setSessionUnread(sid, !isSessionVisible(sid))
+        }
+      },
+    })
+  } catch (error) {
+    finishProgress(progress, error.name === 'AbortError' ? 'cancelled' : 'failed')
+    if (!completed) {
+      Object.assign(reply, backup)
+      reply.error = `重新生成失败，已保留原回答：${error.message}`
+    }
+  } finally {
+    finishProgress(progress, completed ? 'completed' : 'failed')
+    recordMeasurement(progress)
+    Object.assign(reply, { streaming: false, regenerating: false, regenerationPending: false, toolName: null, regenerationNote: null })
+    st.streaming = false
+    controllers.delete(sid)
+    await refreshSessions()
+  }
+}
+
+function refillQuestion(reply) {
+  const st = currentState.value
+  const question = st.messages.slice(0, st.messages.indexOf(reply)).findLast(message => message.role === 'user')
+  if (!question) return
+  if (inputText.value || pickedFiles.value.length) {
+    toast('输入框已有草稿，请先保留或发送草稿后再重试')
+    return
+  }
+  inputText.value = question.content
+  pickedFiles.value = (question.images || []).map(url => ({ id: crypto.randomUUID(), name: url.split('/').at(-1), url, path: `data${url}`, status: 'done' }))
+  toast('问题已放回输入框，确认后可重新发送')
 }
 
 function askSuggestion(q) {
@@ -379,6 +575,8 @@ async function removeSession(session) {
       try {
         await deleteSession(session.id)
         cache.delete(session.id)
+        drafts.delete(session.id)
+        setSessionUnread(session.id, false)
 
         if (currentSessionId.value === session.id) {
           currentSessionId.value = null
@@ -398,6 +596,12 @@ async function removeSession(session) {
 onMounted(() => {
   refreshSessions()
   refreshMemories()
+  document.addEventListener('visibilitychange', markCurrentSessionRead)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', markCurrentSessionRead)
+  messageResizeObserver?.disconnect()
 })
 
 // 校园常用站点，统一在新标签页打开
@@ -417,19 +621,23 @@ const visible = ref({ sessions: true, quick: true, flow: true })
 const currentView = ref('chat')
 const kbVisited = ref(false)
 
-function switchView(view) {
+function switchView(view, { fromSource = false } = {}) {
+  if (view === 'kb' && !fromSource) documentTarget.value = null
   currentView.value = view
   if (view === 'kb') kbVisited.value = true
-  else nextTick(scrollToBottom)
+  else {
+    markCurrentSessionRead()
+    restoreChatScroll()
+  }
 }
 
 const fileInput = ref(null)
-const pickedFiles = ref([])   // { id, name, size, url, path, status: 'uploading'|'done'|'error' }
-const uploading = ref(false)
+const pickedFiles = computed({ get: () => draftOf().files, set: value => { draftOf().files = value } })
+const uploading = computed(() => pickedFiles.value.some(file => file.status === 'uploading'))
 const previewImage = ref(null)
 
 const canSend = computed(
-  () => !sending.value && !uploading.value &&
+  () => !sending.value && !uploading.value && !creatingSession.value &&
     (inputText.value.trim() !== '' || pickedFiles.value.some((f) => f.status === 'done'))
 )
 
@@ -441,6 +649,7 @@ async function onFilesPicked(e) {
   const files = Array.from(e.target.files ?? [])
   e.target.value = ''
   if (!files.length) return
+  const targetDraft = draftOf()
 
   for (const file of files) {
     const item = reactive({
@@ -451,11 +660,11 @@ async function onFilesPicked(e) {
       path: null,
       status: 'uploading',
     })
-    pickedFiles.value.push(item)
-    uploading.value = true
+    targetDraft.files.push(item)
 
     try {
       const res = await uploadImage(file)
+      URL.revokeObjectURL(item.url)
       item.path = res.path
       item.url = res.url
       item.status = 'done'
@@ -463,8 +672,6 @@ async function onFilesPicked(e) {
       item.status = 'error'
       item.error = err.message
       toast(`图片上传失败：${err.message}`, 'error')
-    } finally {
-      uploading.value = pickedFiles.value.some((f) => f.status === 'uploading')
     }
   }
 }
@@ -590,7 +797,13 @@ function removePicked(item) {
                 :class="{ active: s.id === currentSessionId }"
                 @click="selectSession(s.id)"
               >
-                <span class="dot" :class="{ busy: isStreaming(s.id) }" />
+                <span
+                  class="dot"
+                  :class="{ busy: isStreaming(s.id), unread: !isStreaming(s.id) && unreadSessions.has(s.id) }"
+                  role="img"
+                  :aria-label="sessionDotLabel(s.id)"
+                  :title="sessionDotLabel(s.id)"
+                />
                 <span class="session-main">
                   <span class="session-title">{{ s.title }}</span>
                   <span class="session-time">{{ formatSessionTime(s.updated_at) }}</span>
@@ -656,10 +869,11 @@ function removePicked(item) {
             </div>
           </div>
 
-          <div v-else ref="messageListRef" class="message-list">
-            <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
+          <div v-else ref="messageListRef" class="message-list" @scroll="onMessageScroll">
+            <div v-for="(m, i) in messages" :key="m.clientId || m.id" :data-message-id="m.id" :class="['msg', m.role]">
               <div class="msg-bubble">
-                <div v-if="m.toolName" class="msg-tool">正在使用 {{ m.toolName }}</div>
+                <div v-if="m.regenerationNote" class="msg-regeneration-note" role="status">{{ m.regenerationNote }}</div>
+                <GenerationStatus v-if="m.streaming" :progress="m.progress" @layout="!m.regenerating && scrollToBottom()" />
                 <div v-if="m.images?.length" class="msg-images">
                   <img
                     v-for="(src, k) in m.images"
@@ -676,16 +890,18 @@ function removePicked(item) {
                   v-html="renderMarkdown(m.content)"
                 />
                 <div v-else-if="m.content" class="msg-content">{{ m.content }}</div>
-                <span v-if="m.streaming && !m.content" class="msg-dots">
-                  <i /><i /><i />
-                </span>
                 <div v-if="m.error" class="msg-error">{{ m.error }}</div>
+                <button v-if="m.error && !m.id && !sending" type="button" class="refill-question" @click="refillQuestion(m)">重新填写问题</button>
               </div>
+              <MessageActions :message="m" :busy="sending" :has-later="i < messages.length - 1"
+                @sources="openSources(m, $event)" @regenerate="regenerateReply(m)" @error="toast($event, 'error')" />
             </div>
           </div>
 
           <!-- 待发送图片 + 输入框作为整体吸底，缩略图始终在输入框正上方 -->
           <div class="composer-dock">
+            <button v-if="currentState?.followLatest === false" class="latest-reply" type="button" aria-label="回到最新" title="回到最新" @click="scrollToBottom(true)"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v14m-5-5 5 5 5-5" /></svg></button>
+            <p v-if="creatingSession" class="composer-hint">正在创建会话…</p>
             <div v-if="pickedFiles.length" class="attach-preview">
               <div
                 v-for="f in pickedFiles"
@@ -733,8 +949,7 @@ function removePicked(item) {
               <input
                 class="text-input"
                 v-model="inputText"
-                placeholder="请输入你想问的问题..."
-                :disabled="sending"
+                :placeholder="sending ? '先写下一问…' : '请输入你想问的问题...'"
                 @keyup.enter="send"
               />
             </div>
@@ -798,12 +1013,12 @@ function removePicked(item) {
 
           <section class="card panel flow-card" v-glass-tilt v-liquid-buttons :class="{ 'is-hidden': !visible.flow }">
             <div class="panel-head">
-              <h3 class="panel-title">工作流</h3>
+              <h3 class="panel-title">本轮进展</h3>
               <button
                 class="hide-btn"
                 type="button"
-                title="隐藏工作流"
-                aria-label="隐藏工作流"
+                title="隐藏本轮进展"
+                aria-label="隐藏本轮进展"
                 @click="visible.flow = false"
               >
                 <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"
@@ -814,7 +1029,7 @@ function removePicked(item) {
               </button>
             </div>
             <div class="flow">
-              <div v-for="f in ['资料检索', '信息分析', '生成回答', '引用来源']" :key="f" class="flow-item glass-btn" v-glass-tilt>{{ f }}</div>
+              <GenerationStatus :progress="currentState?.progress" expanded />
             </div>
           </section>
         </aside>
@@ -825,6 +1040,8 @@ function removePicked(item) {
         v-show="currentView === 'kb'"
         :confirm="askConfirm"
         :toast="toast"
+        :focus-target="documentTarget"
+        @back-to-source="returnToSource"
       />
 
       <!-- 隐藏后的恢复入口（在 .ui 之外，避免被层叠上下文遮挡） -->
@@ -868,7 +1085,7 @@ function removePicked(item) {
           class="restore-tab glass-btn"
           v-liquid-buttons.self
           type="button"
-          title="显示工作流"
+          title="显示本轮进展"
           @click="visible.flow = true"
         >
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"
@@ -877,12 +1094,14 @@ function removePicked(item) {
             <circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/>
             <path d="M6 8.2v7.6M11 6h9M11 18h9"/>
           </svg>
-          <span>工作流</span>
+          <span>本轮进展</span>
         </button>
       </div>
     </div>
 
     <!-- 设置面板 -->
+    <SourceDrawer :open="sourceOpen" :sources="sourceMessage?.sources || []" :return-focus="sourceReturnFocus"
+      @close="sourceOpen = false" @document="viewSourceDocument" />
     <Teleport to="body">
       <Transition name="confirm">
         <div v-if="settingsOpen" class="confirm-mask" @click.self="settingsOpen = false">
@@ -1297,6 +1516,12 @@ html, body, #app {
   display: flex;
   gap: 8px;
 }
+@media (max-width: 640px) {
+  .topbar { grid-template-columns: auto 1fr; padding: 0 16px; }
+  .topbar .meta, .brand .logo-crop:last-child { display: none; }
+  .tabs { justify-self: end; }
+  .tabs .tab { padding: 8px 14px; }
+}
 .tab {
   cursor: pointer;
   padding: 8px 26px;
@@ -1350,18 +1575,20 @@ html, body, #app {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr) 370px;
+  grid-template-columns: 290px 22px minmax(0, 1fr) 22px 370px;
   /* 单行、行高固定为容器高度：任何面板显隐都不改变其它面板的高度 */
   grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
-  gap: 22px;
+  gap: 0;
   transition:
-    grid-template-columns 0.38s cubic-bezier(0.4, 0, 0.2, 1),
-    column-gap 0.38s cubic-bezier(0.4, 0, 0.2, 1);
+    grid-template-columns 0.38s cubic-bezier(0.4, 0, 0.2, 1);
 }
-/* 列宽收到 0，gap 同步收掉，避免留下 22px 空档 */
-.layout.no-sidebar { grid-template-columns: 0 minmax(0, 1fr) 370px; }
-.layout.no-right   { grid-template-columns: 290px minmax(0, 1fr) 0; }
+/* 间距分别占列，只收起隐藏侧的留白，保留仍可见面板之间的间距。 */
+.layout > .sidebar { grid-column: 1; }
+.layout > .main { grid-column: 3; }
+.layout > .right { grid-column: 5; }
+.layout.no-sidebar { grid-template-columns: 0 0 minmax(0, 1fr) 22px 370px; }
+.layout.no-right   { grid-template-columns: 290px 22px minmax(0, 1fr) 0 0; }
 /* 右列内部两块都收起时，整列宽度也平滑归零 */
 .layout.no-right > .right {
   opacity: 0;
@@ -1369,8 +1596,7 @@ html, body, #app {
   transform: translateX(40px) scale(0.95);
   pointer-events: none;
 }
-.layout.no-sidebar.no-right { grid-template-columns: 0 minmax(0, 1fr) 0; }
-.layout.no-sidebar, .layout.no-right { column-gap: 0; }
+.layout.no-sidebar.no-right { grid-template-columns: 0 0 minmax(0, 1fr) 0 0; }
 
 .sidebar, .main, .card { padding: 24px; overflow: hidden; }
 
@@ -1618,7 +1844,8 @@ html, body, #app {
   .session-del { opacity: 1; transform: none; }
 }
 
-.dot { width: 7px; height: 7px; border-radius: 50%; background: #8fd0ff; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #9299a3; }
+.dot.unread { background: #8fd0ff; }
 
 .main { display: flex; flex-direction: column; gap: 22px; }
 
@@ -1631,7 +1858,7 @@ html, body, #app {
   flex-direction: column;
   gap: 16px;
   padding-right: 6px;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 .message-list::-webkit-scrollbar { width: 6px; }
 .message-list::-webkit-scrollbar-thumb {
@@ -1639,9 +1866,16 @@ html, body, #app {
   border-radius: 999px;
 }
 
-.msg { display: flex; }
-.msg.user { justify-content: flex-end; }
-.msg.assistant { justify-content: flex-start; }
+.msg { display: flex; flex-direction: column; align-items: flex-start; }
+.msg.user { align-items: flex-end; }
+.msg.assistant { align-items: flex-start; }
+.msg-regeneration-note { font-size: 12px; color: #bbd9fb; margin-bottom: 8px; }
+.composer-hint { margin: 0; color: #bdd1e7; font-size: 12px; line-height: 1.7; }
+.latest-reply, .refill-question { display: inline-flex; align-items: center; justify-content: center; gap: 7px; align-self: center; min-height: 44px; padding: 8px 14px; border: 0; border-radius: 22px; background: #23374c; color: #dbecff; font: inherit; font-size: 12px; cursor: pointer; }
+.refill-question { margin-top: 8px; background: transparent; }
+.latest-reply { width: 44px; height: 44px; padding: 0; background: transparent; }
+.latest-reply:hover, .refill-question:hover { background: #304b68; }
+.latest-reply:focus-visible, .refill-question:focus-visible { outline: 2px solid #8fd0ff; outline-offset: 3px; }
 
 .msg-bubble {
   max-width: 78%;
@@ -1804,21 +2038,6 @@ html, body, #app {
   font-size: 13px;
 }
 
-/* 等待首个 token 的三个点 */
-.msg-dots { display: inline-flex; gap: 4px; padding: 4px 0; }
-.msg-dots i {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: #8fd0ff;
-  animation: dot-bounce 1.1s infinite ease-in-out;
-}
-.msg-dots i:nth-child(2) { animation-delay: 0.15s; }
-.msg-dots i:nth-child(3) { animation-delay: 0.3s; }
-
-@keyframes dot-bounce {
-  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
-  30% { transform: translateY(-4px); opacity: 1; }
-}
-
 .session-empty {
   padding: 20px 8px;
   text-align: center;
@@ -1868,6 +2087,9 @@ html, body, #app {
 .composer-dock {
   margin-top: auto;
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .composer-row {
@@ -2024,14 +2246,9 @@ html, body, #app {
   transform: translate(1px, -1px);
 }
 
-.flow { display: flex; flex-direction: column; gap: 14px; }
-.flow-item {
-  padding: 13px 15px; border-radius: 12px;
-  background: rgba(255, 255, 255, calc(var(--lg-tint) * 0.42));
-  border: 1px solid rgba(255, 255, 255, calc(var(--lg-rim) * 1.2));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, calc(var(--lg-rim) * 2.4));
-  font-size: 14px;
-}
+.flow-card { display: flex; flex-direction: column; gap: 18px; }
+.flow-card > .panel-head { flex: none; }
+.flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #7893ae transparent; }
 
 /* 隐藏后的恢复入口 */
 .restore-tab.glass-btn {

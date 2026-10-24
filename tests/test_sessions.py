@@ -9,13 +9,17 @@ from session.service import SessionService
 
 
 DONE = {"type": "done", "final_answer": {"content": "回答", "total_tokens": 8}}
+SAVED_DONE = {"type": "done", "final_answer": {**DONE["final_answer"], "message_id": 2, "reply_to_message_id": 1, "sources": []}}
 QUERY = [{"type": "text", "text": "问题"}]
 
 
 def repository():
     repo = Mock()
-    repo.get_session.return_value = SimpleNamespace(title="已有会话")
+    repo.get_session.return_value = SimpleNamespace(title="已有会话", context_revision=0)
     repo.list_memories.return_value = []
+    repo.get_messages.return_value = []
+    repo.add_message.return_value = SimpleNamespace(id=1)
+    repo.complete_turn.return_value = SimpleNamespace(id=2)
     return repo
 
 
@@ -61,8 +65,8 @@ class SessionTests(unittest.TestCase):
         stream = self.send()
         self.assertEqual(next(stream)["type"], "run_started")
         self.assertEqual(next(stream)["type"], "text_delta")
-        self.assertEqual(next(stream), DONE)
-        self.repo.complete_turn.assert_called_once_with("s", "回答", token_usage={"total_tokens": 8})
+        self.assertEqual(next(stream), SAVED_DONE)
+        self.repo.complete_turn.assert_called_once_with("s", "回答", token_usage={"total_tokens": 8}, sources=[], reply_to_message_id=1)
         self.jobs.assert_called_once_with("u", "问题", "回答")
         list(stream)
         self.assertFalse(self.runs._active)
@@ -77,7 +81,7 @@ class SessionTests(unittest.TestCase):
         self.repo.complete_turn.assert_not_called()
         self.jobs.assert_not_called()
         self.runtime.stream.side_effect = lambda *a, **k: iter([DONE])
-        self.assertEqual(list(self.send())[-1], DONE)
+        self.assertEqual(list(self.send())[-1], SAVED_DONE)
 
     def test_missing_invalid_duplicate_and_explicit_failure_terminate_once(self):
         for events in ([], [{"type": "done", "final_answer": {"content": ""}}],
@@ -143,7 +147,7 @@ class SessionTests(unittest.TestCase):
 
     def test_background_registration_error_does_not_change_saved_success(self):
         self.jobs.side_effect = RuntimeError("登记失败")
-        self.assertEqual(list(self.send())[-1], DONE)
+        self.assertEqual(list(self.send())[-1], SAVED_DONE)
 
 
 if __name__ == "__main__":

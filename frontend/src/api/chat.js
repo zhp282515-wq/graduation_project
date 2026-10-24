@@ -1,10 +1,18 @@
 import { USER_ID } from './client.js'
 
-export async function streamChat({ sessionId, text, images = [], reasoning = null, onEvent, signal }) {
-  const res = await fetch('/api/chat', {
+export function streamChat({ sessionId, text, images = [], reasoning = null, onEvent, signal }) {
+  return streamRequest('/api/chat', { session_id: sessionId, text, images, reasoning }, onEvent, signal)
+}
+
+export function regenerateChat({ sessionId, messageId, onEvent, signal }) {
+  return streamRequest(`/api/sessions/${encodeURIComponent(sessionId)}/messages/${messageId}/regenerate`, null, onEvent, signal)
+}
+
+async function streamRequest(url, body, onEvent, signal) {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-user-id': USER_ID },
-    body: JSON.stringify({ session_id: sessionId, text, images, reasoning }),
+    ...(body === null ? {} : { body: JSON.stringify(body) }),
     signal,
   })
 

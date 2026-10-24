@@ -108,7 +108,7 @@ class WebSearchTool(BaseTool):
                 snippet = snippet[:_MAX_SNIPPET_CHARS] + "…"
 
             lines.append(f"[{index}] {title}\n{url}\n{snippet}")
-            sources.append({"index": index, "title": title, "url": url})
+            sources.append({"index": index, "title": title, "url": url, "text": snippet})
 
         return ToolResult(content="\n\n".join(lines), sources=sources)
 

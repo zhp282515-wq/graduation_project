@@ -47,6 +47,15 @@ CREATE INDEX IF NOT EXISTS idx_memories_user ON memories (user_id, updated_at DE
 _MIGRATE = """
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS images JSONB;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS context_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS sources JSONB;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL;
+UPDATE messages AS answer
+SET reply_to_message_id = (
+    SELECT max(question.id) FROM messages AS question
+    WHERE question.session_id = answer.session_id AND question.role = 'user' AND question.id < answer.id
+)
+WHERE answer.role = 'assistant' AND answer.reply_to_message_id IS NULL;
 """
 
 
@@ -58,6 +67,7 @@ def _to_session(row: dict[str, Any]) -> Session:
         status=row["status"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        context_revision=row.get("context_revision", 0),
     )
 
 
@@ -72,6 +82,8 @@ def _to_message(row: dict[str, Any]) -> Message:
         tool_call_id=row["tool_call_id"],
         token_usage=row["token_usage"],
         images=row["images"],
+        sources=row.get("sources"),
+        reply_to_message_id=row.get("reply_to_message_id"),
     )
 
 
@@ -117,7 +129,7 @@ class PostgresSessionRepository:
                 """
                 INSERT INTO sessions (id, user_id, title)
                 VALUES (%s, %s, %s)
-                RETURNING id, user_id, title, status, created_at, updated_at
+                RETURNING id, user_id, title, status, created_at, updated_at, context_revision
                 """,
                 (session_id, user_id, title),
             )
@@ -133,7 +145,7 @@ class PostgresSessionRepository:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT id, user_id, title, status, created_at, updated_at
+                SELECT id, user_id, title, status, created_at, updated_at, context_revision
                 FROM sessions s
                 WHERE s.user_id = %s
                   AND s.title = %s
@@ -150,7 +162,7 @@ class PostgresSessionRepository:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT id, user_id, title, status, created_at, updated_at
+                SELECT id, user_id, title, status, created_at, updated_at, context_revision
                 FROM sessions
                 WHERE id = %s AND user_id = %s
                 """,
@@ -163,7 +175,7 @@ class PostgresSessionRepository:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT id, user_id, title, status, created_at, updated_at
+                SELECT id, user_id, title, status, created_at, updated_at, context_revision
                 FROM sessions
                 WHERE user_id = %s
                 ORDER BY updated_at DESC
@@ -237,26 +249,54 @@ class PostgresSessionRepository:
 
     def complete_turn(
         self, session_id: str, content: str, *, token_usage: dict[str, Any] | None = None,
-    ) -> None:
-        """助手回答与会话时间一起提交；适用于 autocommit 连接。"""
+        sources: list[dict[str, Any]] | None = None, reply_to_message_id: int | None = None,
+    ) -> Message:
+        """回答、来源与会话时间原子提交。"""
         with self._conn.transaction():
-            with self._conn.cursor() as cur:
+            with self._conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    "INSERT INTO messages (session_id, role, content, token_usage) VALUES (%s, 'assistant', %s, %s)",
-                    (session_id, content, Jsonb(token_usage) if token_usage is not None else None),
+                    """INSERT INTO messages (session_id, role, content, token_usage, sources, reply_to_message_id)
+                    VALUES (%s, 'assistant', %s, %s, %s, %s) RETURNING *""",
+                    (session_id, content, Jsonb(token_usage) if token_usage is not None else None,
+                     Jsonb(sources if sources is not None else []), reply_to_message_id),
                 )
+                row = cur.fetchone()
                 cur.execute("UPDATE sessions SET updated_at = now() WHERE id = %s", (session_id,))
                 if cur.rowcount != 1:
                     raise ValueError("会话已不存在，无法保存回答")
-        # 兼容脚本传入的非 autocommit 连接（读取历史可能已开启外层事务）。
         self._conn.commit()
+        return _to_message(row)
+
+    def replace_answer(
+        self, session_id: str, message_id: int, content: str, *,
+        token_usage: dict[str, Any] | None, sources: list[dict[str, Any]],
+    ) -> Message:
+        with self._conn.transaction():
+            with self._conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """UPDATE messages SET content = %s, token_usage = %s, sources = %s
+                    WHERE session_id = %s AND id = %s AND role = 'assistant' RETURNING *""",
+                    (content, Jsonb(token_usage) if token_usage is not None else None,
+                     Jsonb(sources), session_id, message_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise ValueError("目标回复已不存在")
+                cur.execute(
+                    """UPDATE sessions SET updated_at = now(), context_revision = context_revision + 1
+                    WHERE id = %s""", (session_id,),
+                )
+                if cur.rowcount != 1:
+                    raise ValueError("会话已不存在")
+        self._conn.commit()
+        return _to_message(row)
 
     def get_messages(self, user_id: str, session_id: str) -> list[Message]:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 SELECT m.id, m.session_id, m.role, m.content, m.created_at,
-                       m.tool_calls, m.tool_call_id, m.token_usage, m.images
+                       m.tool_calls, m.tool_call_id, m.token_usage, m.images, m.sources, m.reply_to_message_id
                 FROM messages m
                 JOIN sessions s ON s.id = m.session_id
                 WHERE m.session_id = %s AND s.user_id = %s

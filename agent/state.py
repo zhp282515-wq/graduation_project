@@ -11,6 +11,8 @@ class AgentInput(TypedDict):
     timeout: NotRequired[int]
     reasoning: NotRequired[Any]        # 值域由所配 Provider 决定：Qwen 是 bool，OpenAI 是档位字符串
     memory: NotRequired[list[str]]     # 该用户的长期记忆（纯文本条目），由服务层查库注入
+    messages: NotRequired[list[ChatMessage]]
+    context_revision: NotRequired[int]
 
 
 class MessagesState(TypedDict):
@@ -21,6 +23,7 @@ class MessagesState(TypedDict):
 class AgentState(MessagesState):
     """图运行期间使用的完整状态。"""
     query: list[dict[str, Any]]
+    context_revision: NotRequired[int]
     last_response: NotRequired[ChatResponse]
     max_turns: NotRequired[int]
     turn_count: NotRequired[int]

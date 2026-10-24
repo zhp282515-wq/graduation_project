@@ -1,9 +1,9 @@
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
-from models.base import BaseProvider
+from models.base import BaseProvider, ChatMessage
 from .graph import build_graph
 from .nodes import create_nodes
 from .state import AgentInput
@@ -50,6 +50,8 @@ class AgentRuntime:
             reasoning: Any = None,
             memory: list[str] | None = None,
             cancel_event=None,
+            history: Callable[[], list[dict[str, Any]]] | None = None,
+            context_revision: int = 0,
     ) -> Iterator[dict[str, Any]]:
         effective_max_turns = max_turns if max_turns is not None else self.default_max_turns
         recursion_limit = effective_max_turns * 2 + 6
@@ -59,16 +61,21 @@ class AgentRuntime:
             "max_turns": effective_max_turns,
             "reasoning": reasoning,
             "memory": memory or [],
+            "context_revision": context_revision,
         }
+
+        config = {"configurable": {"thread_id": session_id}, "recursion_limit": recursion_limit}
+        values = self.graph.get_state(config).values if self.graph.checkpointer is not None else {}
+        if values and values.get("context_revision", 0) != context_revision:
+            # 不能用追加 reducer 改写旧答案，也不能保留含旧结论的摘要。
+            self.delete_thread(session_id)
+            values = {}
+        if not values and history is not None:
+            agent_input["messages"] = [ChatMessage.model_validate(m) for m in history()]
 
         yield from self.graph.stream(
             agent_input,
-            config={
-                "configurable": {
-                    "thread_id": session_id,
-                },
-                "recursion_limit": recursion_limit,
-            },
+            config=config,
             stream_mode="custom"
         )
 

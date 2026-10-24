@@ -45,6 +45,7 @@ from models.openai.ChatGPT import OpenAIProvider
 from utils.prompts_loader import get_prompt
 
 from utils.query_tool import build_query
+from utils.conversation import saved_history
 
 # ---------- 图片上传 ----------
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
@@ -178,6 +179,7 @@ def get_service(request: Request):
             PostgresSessionRepository(conn),
             request.app.state.runtime,
             runs=request.app.state.runs,
+            history_builder=saved_history,
         )
 
 
@@ -267,6 +269,7 @@ async def chat(
             on_complete=lambda uid, text, answer: background.add_task(
                 request.app.state.memory_jobs.run, uid, text, answer,
             ),
+            history_builder=saved_history,
         )
         return service.send_message(
             user["id"],
@@ -293,14 +296,38 @@ async def chat(
         resources.close()
         raise
 
+    return chat_response(stream, resources, background)
+
+
+def chat_response(stream, resources: ExitStack, background: BackgroundTasks):
     def sse():
         for event in stream:
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    return ChatStreamingResponse(sse(), run=stream, cleanup=resources.close,
+                                 background=background, media_type="text/event-stream")
 
-    return ChatStreamingResponse(
-        sse(), run=stream, cleanup=resources.close,
-        background=background, media_type="text/event-stream",
-    )
+
+@app.post("/api/sessions/{session_id}/messages/{message_id}/regenerate")
+async def regenerate_message(
+    session_id: str, message_id: int, request: Request, background: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    resources = ExitStack()
+    def prepare_run():
+        conn = resources.enter_context(request.app.state.pg_pool.connection())
+        service = SessionService(PostgresSessionRepository(conn), request.app.state.runtime,
+                                 runs=request.app.state.runs, history_builder=saved_history)
+        return service.regenerate(user["id"], session_id, message_id)
+    try:
+        stream = await run_in_threadpool(prepare_run)
+    except (SessionBusyError, LookupError, ValueError) as exc:
+        resources.close()
+        status = 409 if isinstance(exc, SessionBusyError) else 404 if isinstance(exc, LookupError) else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except BaseException:
+        resources.close()
+        raise
+    return chat_response(stream, resources, background)
 
 
 
@@ -489,6 +516,7 @@ def list_knowledge_chunks(
         "items": [
             {
                 "chunk_index": r.get("chunk_index", 0),
+                "chunk_id": r.get("id"),
                 "text": r.get("text") or "",
                 "section_path": r.get("section_path"),
                 "page": r.get("page"),

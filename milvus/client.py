@@ -311,7 +311,7 @@ class MilvusVectorStore:
             collection_name=self.collection,
             filter="file_md5 == {m} and chunk_index >= {start} and chunk_index < {end}",
             filter_params={"m": file_md5, "start": offset, "end": offset + limit},
-            output_fields=["chunk_index", "text", "section_path", "block_type", "page"],
+            output_fields=["id", "chunk_index", "text", "section_path", "block_type", "page"],
             limit=limit,
         )
         return sorted(rows, key=lambda r: r.get("chunk_index", 0))

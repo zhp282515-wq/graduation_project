@@ -95,6 +95,56 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.jobs.run.assert_called_once_with("u", "问题", "回答")
 
+    def test_regeneration_and_history_expose_saved_ids_and_source_snapshots(self):
+        from session.models import Message
+        snapshots = [{"id": "web:1", "kind": "web", "url": "https://example.com/", "title": "官网", "text": "当时摘要"}]
+        self.repo.get_messages.return_value = [
+            Message(1, "s", "user", "原问题"),
+            Message(2, "s", "assistant", "旧回答", sources=snapshots, reply_to_message_id=1),
+            Message(3, "s", "user", "后续问题"),
+        ]
+        self.repo.replace_answer.return_value = Message(2, "s", "assistant", "回答", sources=[], reply_to_message_id=1)
+        client = self.client()
+        history = client.get("/api/sessions/s/messages", headers={"x-user-id": "u"}).json()
+        self.assertEqual(history[1]["sources"], snapshots)
+        self.assertEqual(history[1]["reply_to_message_id"], 1)
+        response = client.post("/api/sessions/s/messages/2/regenerate", headers={"x-user-id": "u"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text.count('"type": "done"'), 1)
+        self.assertIn('"user_message_id": 1', response.text)
+        self.assertIn('"message_id": 2', response.text)
+        self.repo.add_message.assert_not_called()
+        self.jobs.run.assert_not_called()
+        self.assertFalse(main.app.state.runs._active)
+        self.assertEqual(self.pools[1].active, 0)
+
+    def test_regeneration_http_validation_and_busy_requests_do_not_write(self):
+        from session.models import Message
+        self.repo.get_messages.return_value = [Message(1, "s", "user", "问题"), Message(2, "s", "assistant", "回答")]
+        client = self.client()
+        url = "/api/sessions/s/messages/2/regenerate"
+        self.assertEqual(client.post(url).status_code, 401)
+        with main.app.state.runs.acquire("s"):
+            self.assertEqual(client.post(url, headers={"x-user-id": "u"}).status_code, 409)
+        self.assertEqual(client.post(url, headers={"x-user-id": "u"}).status_code, 422)
+        self.assertEqual(client.post(url.replace('/2/', '/1/'), headers={"x-user-id": "u"}).status_code, 404)
+        self.repo.get_session.return_value = None
+        self.assertEqual(client.post(url, headers={"x-user-id": "other"}).status_code, 404)
+        self.repo.replace_answer.assert_not_called()
+        self.repo.add_message.assert_not_called()
+        self.runtime.stream.assert_not_called()
+        self.assertFalse(main.app.state.runs._active)
+        self.assertEqual(self.pools[1].active, 0)
+
+    def test_document_chunks_expose_stable_primary_ids(self):
+        self.kb_repo.get.return_value = dict(file_md5="hash", file_name="手册.pdf", file_type="pdf",
+                                              status="ready", chunk_count=23)
+        self.knowledge.list_chunks.return_value = [{"id": "stable-uuid", "chunk_index": 21, "text": "分片快照", "page": 3}]
+        response = self.client().get("/api/knowledge/documents/hash/chunks?page=2&page_size=20")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["chunk_id"], "stable-uuid")
+        self.knowledge.list_chunks.assert_called_once_with("hash", offset=20, limit=20)
+
     def test_concurrent_http_send_accepts_only_one_request(self):
         client = self.client()
         entered, release = threading.Event(), threading.Event()

@@ -10,7 +10,7 @@ from models.dashscope.embedding import DashScopeEmbedding
 from models.dashscope.reranker import DashScopeReranker
 from utils.logger_tool import logger
 
-_SEARCH_FIELDS = ("text", "file_md5", "file_name", "section_path", "block_type", "page")
+_SEARCH_FIELDS = ("text", "file_md5", "file_name", "file_type", "chunk_index", "section_path", "block_type", "page", "url")
 
 # 三个 retriever 的召回数；重排后最终返回条数。
 _RECALL_TOP_K = 20
@@ -206,7 +206,11 @@ class KnowledgeService:
                 "file_name": hit.get("file_name"),
                 "file_md5": hit.get("file_md5"),
                 "section_path": hit.get("section_path"),
-                "page": hit.get("page"),
+                "page": hit.get("page") if hit.get("file_type") == "pdf" and type(hit.get("page")) is int and hit["page"] > 0 else None,
+                "chunk_id": hit.get("id"),
+                "chunk_index": hit.get("chunk_index"),
+                "file_type": hit.get("file_type"),
+                "url": hit.get("url"),
             },
         }
 

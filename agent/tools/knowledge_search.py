@@ -71,6 +71,11 @@ class KnowledgeSearchTool(BaseTool):
                 "section_path": r["source"]["section_path"],
                 "page": r["source"]["page"],
                 "score": r["score"],
+                "chunk_id": r["source"].get("chunk_id"),
+                "chunk_index": r["source"].get("chunk_index"),
+                "file_type": r["source"].get("file_type"),
+                "url": r["source"].get("url"),
+                "text": r["text"],
             }
             for index, r in enumerate(results, start=1)
         ]

@@ -1,4 +1,5 @@
 from typing import Any, Protocol, Iterator
+from collections.abc import Callable
 
 from session.models import Memory, Message, Session
 
@@ -18,7 +19,11 @@ class SessionRepository(Protocol):
 
     def touch_session(self, session_id: str) -> None: ...
 
-    def complete_turn(self, session_id: str, content: str, *, token_usage: dict[str, Any] | None = None) -> None: ...
+    def complete_turn(self, session_id: str, content: str, *, token_usage: dict[str, Any] | None = None,
+                      sources: list[dict[str, Any]] | None = None, reply_to_message_id: int | None = None) -> Message: ...
+
+    def replace_answer(self, session_id: str, message_id: int, content: str, *,
+                       token_usage: dict[str, Any] | None, sources: list[dict[str, Any]]) -> Message: ...
 
     def list_memories(self, user_id: str) -> list[Memory]: ...
 
@@ -61,6 +66,8 @@ class AgentPort(Protocol):
         reasoning: Any | None = None,
         memory: list[str] | None = None,
         cancel_event: Any = None,
+        history: Callable[[], list[dict[str, Any]]] | None = None,
+        context_revision: int = 0,
     ) -> Iterator[dict[str, Any]]: ...
 
     def delete_thread(self, session_id: str) -> None: ...

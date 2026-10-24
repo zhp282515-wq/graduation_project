@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   deleteKnowledgeDocument,
   getKnowledgeJob,
@@ -12,7 +12,11 @@ import {
 const props = defineProps({
   confirm: { type: Function, required: true },
   toast: { type: Function, required: true },
+  focusTarget: { type: Object, default: null },
 })
+const emit = defineEmits(['back-to-source'])
+const sourceHint = ref('')
+const highlightedChunkId = ref(null)
 
 const TYPE_LABEL = { md: 'MD', doc: 'DOC', docx: 'DOCX', pdf: 'PDF', txt: 'TXT' }
 const STAGE_LABEL = {
@@ -130,6 +134,19 @@ function onDocClick() {
 
 /* ---------- 详情 / 切片 ---------- */
 const selected = ref(null)
+const sourceDocument = ref(null)
+const displayedDocs = computed(() => {
+  const source = sourceDocument.value
+  return source && !docs.value.some(doc => doc.file_md5 === source.file_md5) ? [source, ...docs.value] : docs.value
+})
+function isSourceDocument(doc) {
+  return sourceDocument.value?.file_md5 === doc.file_md5 && selected.value?.file_md5 === doc.file_md5
+}
+watch([sourceDocument, docs], async () => {
+  if (!sourceDocument.value) return
+  await nextTick()
+  document.querySelector('.kb-row.is-source')?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+})
 const chunks = ref([])
 const chunkTotal = ref(0)
 const chunkPage = ref(1)
@@ -141,12 +158,17 @@ let chunkSeq = 0
 const chunkPages = computed(() => Math.max(1, Math.ceil(chunkTotal.value / chunkPageSize)))
 
 async function selectDoc(doc) {
+  sourceDocument.value = null
+  highlightedChunkId.value = null
+  sourceHint.value = ''
   selected.value = doc
   chunkPage.value = 1
   await fetchChunks()
 }
 
 function closeDetail() {
+  ++chunkSeq
+  sourceDocument.value = null
   selected.value = null
   chunks.value = []
 }
@@ -167,7 +189,9 @@ async function fetchChunks() {
       const idx = docs.value.findIndex((d) => d.file_md5 === md5)
       if (idx !== -1) Object.assign(docs.value[idx], data.document)
       selected.value = { ...selected.value, ...data.document }
+      if (props.focusTarget?.file_md5 === md5) sourceDocument.value = data.document
     }
+    return true
   } catch (e) {
     if (seq !== chunkSeq) return
     chunkError.value = e.message
@@ -182,6 +206,41 @@ function goChunkPage(p) {
   chunkPage.value = next
   fetchChunks()
 }
+
+watch(() => props.focusTarget?.requestId, async () => {
+  const target = props.focusTarget
+  if (!target) {
+    ++chunkSeq
+    highlightedChunkId.value = null
+    sourceHint.value = ''
+    chunkError.value = ''
+    chunksLoading.value = false
+    closeDetail()
+    return
+  }
+  const requestId = target.requestId
+  sourceDocument.value = null
+  highlightedChunkId.value = null
+  sourceHint.value = ''
+  selected.value = { file_md5: target.file_md5, file_name: target.title, file_type: target.file_type, status: 'ready' }
+  chunkPage.value = Math.floor(target.chunk_index / chunkPageSize) + 1
+  const loaded = await fetchChunks()
+  if (requestId !== props.focusTarget?.requestId) return
+  if (!loaded) {
+    sourceHint.value = '当前文档无法打开。可返回来源，继续查看保存的历史分片。'
+    return
+  }
+  const match = target.chunk_id && chunks.value.find(chunk => chunk.chunk_id === target.chunk_id)
+  if (match) {
+    highlightedChunkId.value = match.chunk_id
+    sourceHint.value = '已定位这条回复使用的来源分片。'
+    await nextTick()
+    document.querySelector('.kb-chunk.is-source')?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  } else {
+    sourceHint.value = '文档已重新切片，当前内容与历史来源可能不同。原分片仍可在来源面板查看。'
+    if (chunkPage.value > chunkPages.value) { chunkPage.value = 1; await fetchChunks() }
+  }
+}, { immediate: true })
 
 /* ---------- 删除 ---------- */
 function removeDoc(doc) {
@@ -373,6 +432,7 @@ onBeforeUnmount(() => {
     <!-- 头部 -->
     <div class="kb-head">
       <div class="kb-heading">
+        <button v-if="focusTarget" class="kb-return-source" type="button" @click="emit('back-to-source')">返回来源</button>
         <h2 class="kb-title">知识库</h2>
         <span class="kb-sub">共 {{ total }} 份文档</span>
       </div>
@@ -456,7 +516,7 @@ onBeforeUnmount(() => {
     <div class="kb-workspace">
       <div class="kb-list-wrap">
         <div v-if="loadError" class="kb-empty">{{ loadError }}</div>
-        <div v-else-if="!docs.length && !loading" class="kb-empty">
+        <div v-else-if="!displayedDocs.length && !loading" class="kb-empty">
           <p>还没有匹配的文档</p>
           <button v-if="facets.all === 0" class="glass-btn" v-glass-tilt type="button" @click="manualSync">
             从 Milvus 同步现有文档
@@ -465,10 +525,11 @@ onBeforeUnmount(() => {
 
         <div v-else class="kb-list" :class="{ dim: loading }">
           <div
-            v-for="doc in docs"
+            v-for="doc in displayedDocs"
             :key="doc.file_md5"
             class="kb-row glass-btn"
-            :class="{ active: selected?.file_md5 === doc.file_md5 }"
+            :class="{ active: selected?.file_md5 === doc.file_md5, 'is-source': isSourceDocument(doc) }"
+            :aria-current="isSourceDocument(doc) ? 'true' : undefined"
             v-glass-tilt
             @click="selectDoc(doc)"
           >
@@ -476,6 +537,7 @@ onBeforeUnmount(() => {
             <span class="kb-row-main">
               <span class="kb-row-name">{{ doc.file_name }}</span>
               <span class="kb-row-meta">
+                <span v-if="isSourceDocument(doc)" class="kb-source-label">来源文档</span>
                 <span>{{ formatBytes(doc.file_size) }}</span>
                 <span>·</span>
                 <span>{{ doc.chunk_count ?? '—' }} 块</span>
@@ -541,6 +603,7 @@ onBeforeUnmount(() => {
 
       <div class="kb-detail">
         <template v-if="selected">
+          <p v-if="sourceHint" class="kb-source-hint" role="status">{{ sourceHint }}</p>
           <div class="kb-detail-head">
             <h3>{{ selected.file_name }}</h3>
             <button class="kb-detail-close" type="button" aria-label="关闭详情" @click="closeDetail">×</button>
@@ -553,7 +616,7 @@ onBeforeUnmount(() => {
             <div><span>状态</span><strong>{{ statusLabel(selected) }}</strong></div>
             <div><span>上传</span><strong>{{ formatDate(selected.created_at) }}</strong></div>
             <div><span>入库</span><strong>{{ formatDate(selected.ingested_at) }}</strong></div>
-            <div class="full"><span>MD5</span><strong class="mono">{{ selected.file_md5 }}</strong></div>
+            <div v-if="!focusTarget" class="full"><span>MD5</span><strong class="mono">{{ selected.file_md5 }}</strong></div>
             <div v-if="selected.original_name" class="full">
               <span>原文件名</span><strong>{{ selected.original_name }}</strong>
             </div>
@@ -570,10 +633,10 @@ onBeforeUnmount(() => {
             <div v-if="chunksLoading" class="kb-empty">加载中…</div>
             <div v-else-if="chunkError" class="kb-empty">{{ chunkError }}</div>
             <div v-else-if="!chunks.length" class="kb-empty">没有切片</div>
-            <div v-for="chunk in chunks" :key="chunk.chunk_index" class="kb-chunk">
+            <div v-for="chunk in chunks" :key="chunk.chunk_id || chunk.chunk_index" class="kb-chunk" :class="{ 'is-source': chunk.chunk_id && chunk.chunk_id === highlightedChunkId }">
               <div class="kb-chunk-meta">
                 <span class="kb-chunk-idx">#{{ chunk.chunk_index }}</span>
-                <span v-if="chunk.page">第 {{ chunk.page }} 页</span>
+                <span v-if="selected.file_type === 'pdf' && chunk.page">第 {{ chunk.page }} 页</span>
                 <span class="kb-chunk-type">{{ chunk.block_type }}</span>
                 <span>{{ chunk.char_count }} 字</span>
               </div>
@@ -598,6 +661,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.kb-return-source { min-height: 44px; padding: 0 12px; border: 1px solid rgba(167,205,248,.35); border-radius: 10px; color: #d4e8ff; background: rgba(51,83,119,.38); font: inherit; font-size: 12px; cursor: pointer; }
+.kb-return-source:hover { background: rgba(79,117,160,.45); }
+.kb-return-source:focus-visible { outline: 2px solid #8fd0ff; outline-offset: 3px; }
+.kb-source-hint { margin: 0 0 14px; padding: 12px; color: #d6e9ff; background: rgba(70,107,150,.25); border-radius: 10px; font-size: 12px; line-height: 1.8; }
+.kb-chunk.is-source { outline: 2px solid #a5d4ff; outline-offset: -2px; background: rgba(91,143,199,.18); }
 .kb-page {
   flex: 1;
   min-height: 0;
@@ -753,6 +821,10 @@ onBeforeUnmount(() => {
 }
 .kb-row:hover { background: rgba(255, 255, 255, 0.15); }
 .kb-row.active { box-shadow: inset 0 0 0 1px rgba(150, 195, 245, 0.55); }
+.kb-row.is-source { background: rgba(82, 145, 215, .25); border-color: rgba(154, 205, 255, .7); box-shadow: none; }
+.kb-row.is-source:hover { background: rgba(82, 145, 215, .33); }
+.kb-row.is-source .kb-row-name { color: #e2f1ff; font-weight: 650; }
+.kb-source-label { color: #c1e2ff; font-weight: 600; }
 
 .kb-badge {
   flex: none;

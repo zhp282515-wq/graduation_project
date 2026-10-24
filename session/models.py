@@ -15,6 +15,7 @@ class Session:
     status: SessionStatus
     created_at: datetime
     updated_at: datetime
+    context_revision: int = 0
 
 
 @dataclass
@@ -28,6 +29,8 @@ class Message:
     tool_call_id: str | None = None
     token_usage: dict[str, Any] | None = None
     images: list[str] | None = None
+    sources: list[dict[str, Any]] | None = None
+    reply_to_message_id: int | None = None
 
 
 @dataclass

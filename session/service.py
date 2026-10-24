@@ -1,10 +1,12 @@
 import time
+from uuid import uuid4
 from collections.abc import Callable, Iterator
 from typing import Any
 
 from session.models import DEFAULT_SESSION_TITLE, Memory, Message, Session
 from session.ports import AgentPort, SessionRepository
 from session.runs import DEFAULT_RUNS, KeyedLocks, RunStream
+from session.sources import normalize_sources
 from utils.logger_tool import logger
 from datetime import datetime
 
@@ -21,11 +23,13 @@ class SessionService:
         *,
         runs: KeyedLocks | None = None,
         on_complete: Callable[[str, str, str], None] | None = None,
+        history_builder: Callable[[list[Message]], list[dict[str, Any]]] | None = None,
     ):
         self._repo = repository
         self._runtime = runtime
         self._runs = runs if runs is not None else DEFAULT_RUNS
         self._on_complete = on_complete
+        self._history_builder = history_builder
 
     def create_session(self, user_id: str, title: str | None = None) -> Session:
         # 未指定标题（= 用户点「新会话」）时复用已有的空会话，
@@ -100,7 +104,8 @@ class SessionService:
             session = self._repo.get_session(user_id, session_id)
             if session is None:
                 raise ValueError(f"会话不存在：{session_id}")
-            self._repo.add_message(
+            prefix = self._repo.get_messages(user_id, session_id)
+            question = self._repo.add_message(
                 session_id, "user", text,
                 images=image_urls if image_urls is not None else images,
             )
@@ -108,7 +113,45 @@ class SessionService:
                 self._repo.update_session_title(user_id, session_id, text[:_AUTOTITLE_MAX_LEN] or "图片消息")
             return RunStream(self._stream(
                 session_id, query, max_turns=max_turns,
-                reasoning=reasoning, user_id=user_id,
+                reasoning=reasoning, user_id=user_id, question_id=question.id,
+                history=prefix, context_revision=getattr(session, "context_revision", 0),
+            ), lease)
+        except BaseException:
+            lease.release()
+            raise
+
+    def _build_history(self, messages: list[Message]) -> list[dict[str, Any]]:
+        if self._history_builder is not None:
+            return self._history_builder(messages)
+        if any(m.images for m in messages):
+            raise ValueError("恢复图片对话需要配置图片历史适配器")
+        return [{"role": m.role, "content": [{"type": "text", "text": m.content}]} for m in messages]
+
+    def regenerate(self, user_id: str, session_id: str, message_id: int) -> RunStream:
+        if self._repo.get_session(user_id, session_id) is None:
+            raise LookupError("会话不存在")
+        lease = self._runs.acquire(session_id)
+        try:
+            session = self._repo.get_session(user_id, session_id)
+            if session is None:
+                raise LookupError("会话不存在")
+            messages = self._repo.get_messages(user_id, session_id)
+            answer = next((m for m in messages if m.id == message_id and m.role == "assistant"), None)
+            if answer is None:
+                raise LookupError("目标回复不存在")
+            question_index = next((i for i, m in enumerate(messages)
+                                   if m.id == answer.reply_to_message_id and m.role == "user" and m.id < answer.id), None)
+            if question_index is None:
+                raise ValueError("该回复无法关联原问题，不能重新生成")
+            question = messages[question_index]
+            query = self._build_history([question])[0]["content"]
+            prefix = messages[:question_index]
+            # 在响应开始前校验图片；不在模型调用中途才发现历史不可恢复。
+            seed = self._build_history(prefix)
+            return RunStream(self._stream(
+                session_id, query, max_turns=None, user_id=user_id,
+                question_id=question.id, history=prefix, context_revision=session.context_revision,
+                replacement_id=answer.id, seed=seed,
             ), lease)
         except BaseException:
             lease.release()
@@ -122,19 +165,30 @@ class SessionService:
         max_turns: int | None,
         reasoning: Any | None = None,
         user_id: str | None = None,
+        question_id: int,
+        history: list[Message],
+        context_revision: int,
+        replacement_id: int | None = None,
+        seed: list[dict[str, Any]] | None = None,
     ) -> Iterator[dict[str, Any]]:
         started = time.perf_counter()
         pending_done = None
+        sources = {}
+        runtime_id = f"regenerate:{session_id}:{uuid4().hex}" if replacement_id is not None else session_id
         yield {
             "type": "run_started",
             "session_id": session_id,
+            "user_message_id": question_id,
+            "operation": "regenerate" if replacement_id is not None else "send",
+            "message_id": replacement_id,
             "started_at": datetime.now().isoformat(timespec="seconds"),
         }
         try:
             memory_lines = [m.content for m in self._repo.list_memories(user_id)] if user_id else []
             events = self._runtime.stream(
-                query, session_id=session_id, max_turns=max_turns,
-                reasoning=reasoning, memory=memory_lines,
+                query, session_id=runtime_id, max_turns=max_turns,
+                reasoning=reasoning, memory=memory_lines, context_revision=context_revision,
+                history=lambda: seed if seed is not None else self._build_history(history),
             )
             try:
                 for event in events:
@@ -146,6 +200,10 @@ class SessionService:
                     elif kind == "run_failed":
                         raise RuntimeError(event.get("message") or "Agent 执行失败")
                     else:
+                        if kind == "tool_finished" and event.get("status") == "completed":
+                            normalized = normalize_sources(event.get("sources"), event.get("name", ""))
+                            sources.update((source["id"], source) for source in normalized)
+                            event = {**event, "sources": normalized}
                         yield event
             finally:
                 close = getattr(events, "close", None)
@@ -158,7 +216,22 @@ class SessionService:
             usage = dict(final.get("token_usage") or {})
             if isinstance(final.get("total_tokens"), int):
                 usage["total_tokens"] = final["total_tokens"]
-            self._repo.complete_turn(session_id, answer, token_usage=usage or None)
+            snapshots = list(sources.values())
+            if replacement_id is None:
+                saved = self._repo.complete_turn(
+                    session_id, answer, token_usage=usage or None, sources=snapshots, reply_to_message_id=question_id,
+                )
+            else:
+                saved = self._repo.replace_answer(
+                    session_id, replacement_id, answer, token_usage=usage or None, sources=snapshots,
+                )
+                try:
+                    self._runtime.delete_thread(session_id)
+                except Exception:
+                    logger.exception("清理旧主 checkpoint 失败，后续依靠上下文修订号重建")
+            pending_done = {**pending_done, "final_answer": {
+                **final, "message_id": saved.id, "reply_to_message_id": question_id, "sources": snapshots,
+            }}
         except Exception as exc:
             logger.exception("会话 %s 本轮执行失败", session_id)
             yield {
@@ -168,10 +241,16 @@ class SessionService:
                 "elapsed_ms": int((time.perf_counter() - started) * 1000),
             }
             return
+        finally:
+            if replacement_id is not None:
+                try:
+                    self._runtime.delete_thread(runtime_id)
+                except Exception:
+                    logger.exception("临时重新生成 checkpoint 清理失败：%s", runtime_id)
 
         logger.info("会话 %s 完成一轮并保存回答，耗时 %.2fs", session_id, time.perf_counter() - started)
         # 后台任务登记失败也不能把已经提交的回答改判失败。
-        if self._on_complete and user_id:
+        if self._on_complete and user_id and replacement_id is None:
             user_text = "".join(
                 p.get("text", "") for p in query
                 if isinstance(p, dict) and p.get("type") == "text"
