@@ -10,9 +10,9 @@ from fastapi import (
     BackgroundTasks, Depends, FastAPI, File, Form, Header,
     HTTPException, Query, Request, UploadFile,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -27,6 +27,9 @@ from pydantic import BaseModel
 
 from session.repository import PostgresSessionRepository
 from session.service import SessionService
+from session.runs import KeyedLocks, SessionBusyError
+from session.memory_jobs import MemoryJobs
+from api.streaming import ChatStreamingResponse
 from knowledge.documents import KbDocumentRepository
 from knowledge.server import KnowledgeService
 from utils.logger_tool import logger
@@ -71,97 +74,90 @@ async def lifespan(app: FastAPI):
     if not dsn:
         raise RuntimeError("缺少 LANGGRAPH_POSTGRES_URI 配置")
 
-    # checkpoint 连接池
-    saver_pool = ConnectionPool(
-        dsn,
-        min_size = 1,
-        max_size = 10,
-        open = False,
-        kwargs = {
-            "autocommit": True,
-            "prepare_threshold": 0,
-            "row_factory": dict_row
-        }
-    )
-    # 业务池
-    pg_pool = ConnectionPool(
-        dsn,
-        min_size = 1,
-        max_size = 10,
-        open = False,
-        kwargs = {
-            "autocommit": True,
-            "row_factory": dict_row
-        }
-    )
-    saver_pool.open()
-    pg_pool.open()
-    saver_pool.wait(timeout=10)
-    pg_pool.wait(timeout=10)
-
-    saver = PostgresSaver(
-        saver_pool,
-        serde=JsonPlusSerializer(
-            allowed_msgpack_modules=[
-                ChatMessage,
-                ChatResponse
-            ]
+    with ExitStack() as resources:
+        # checkpoint 连接池
+        saver_pool = ConnectionPool(
+            dsn,
+            min_size = 1,
+            max_size = 10,
+            open = False,
+            kwargs = {
+                "autocommit": True,
+                "prepare_threshold": 0,
+                "row_factory": dict_row
+            }
         )
-    )
-    saver.setup()
+        resources.callback(saver_pool.close)
+        # 业务池
+        pg_pool = ConnectionPool(
+            dsn,
+            min_size = 1,
+            max_size = 10,
+            open = False,
+            kwargs = {
+                "autocommit": True,
+                "row_factory": dict_row
+            }
+        )
+        resources.callback(pg_pool.close)
+        saver_pool.open()
+        pg_pool.open()
+        saver_pool.wait(timeout=10)
+        pg_pool.wait(timeout=10)
 
-    with pg_pool.connection() as conn:
-        PostgresSessionRepository(conn).setup()
-        kb_repo = KbDocumentRepository(conn)
-        kb_repo.setup()
-        stalled = kb_repo.reconcile_after_restart()
-        if stalled:
-            logger.warning("知识库：%d 个在途任务因服务重启被标记为失败", stalled)
+        saver = PostgresSaver(
+            saver_pool,
+            serde=JsonPlusSerializer(
+                allowed_msgpack_modules=[
+                    ChatMessage,
+                    ChatResponse
+                ]
+            )
+        )
+        saver.setup()
 
-    # 知识库服务只建一次：Milvus 客户端、embedding、reranker、MinerU 解析器都复用。
-    # 初始化失败不能拖垮整个服务 —— 聊天照常，知识库接口返回 503。
-    try:
-        kb_service = KnowledgeService()
-        app.state.knowledge = kb_service
-        app.state.kb_error = None
-    except Exception as exc:
-        logger.exception("知识库服务初始化失败")
-        kb_service = None
-        app.state.knowledge = None
-        app.state.kb_error = f"{type(exc).__name__}: {exc}"
+        with pg_pool.connection() as conn:
+            PostgresSessionRepository(conn).setup()
+            kb_repo = KbDocumentRepository(conn)
+            kb_repo.setup()
+            stalled = kb_repo.reconcile_after_restart()
+            if stalled:
+                logger.warning("知识库：%d 个在途任务因服务重启被标记为失败", stalled)
 
-    app.state.pg_pool = pg_pool
-    app.state.runtime = AgentRuntime(
-        model = DashScopeProvider(model="qwen3.8-flash"),
-        tools = [
-            WeatherTool(),
-            WebSearchTool(),
-            AcademicCalendarTool(),
-            KnowledgeSearchTool(kb_service) if kb_service else KnowledgeSearchTool(),
-        ],
-        prompts = get_prompt(),
-        checkpointer = saver,
-        summary_model = DashScopeProvider(model="qwen3.7-flash"),
-    )
-    # 记忆抽取用便宜的小模型，与摘要模型共用即可
-    app.state.memory_extractor = MemoryExtractor(
-        DashScopeProvider(model="qwen3.7-flash")
-    )
-    yield
+        # 知识库服务只建一次：Milvus 客户端、embedding、reranker、MinerU 解析器都复用。
+        # 初始化失败不能拖垮整个服务 —— 聊天照常，知识库接口返回 503。
+        try:
+            kb_service = KnowledgeService()
+            app.state.knowledge = kb_service
+            app.state.kb_error = None
+            resources.callback(kb_service.close)
+        except Exception as exc:
+            logger.exception("知识库服务初始化失败")
+            kb_service = None
+            app.state.knowledge = None
+            app.state.kb_error = f"{type(exc).__name__}: {exc}"
 
-    if kb_service is not None:
-        for closer in (
-            getattr(kb_service.parser, "close", None),
-            getattr(getattr(kb_service.store, "client", None), "close", None),
-        ):
-            try:
-                if closer:
-                    closer()
-            except Exception:
-                logger.warning("关闭知识库资源时出错", exc_info=True)
+        app.state.runs = KeyedLocks()
+        app.state.pg_pool = pg_pool
+        app.state.runtime = AgentRuntime(
+            model = DashScopeProvider(model="qwen3.8-flash"),
+            tools = [
+                WeatherTool(),
+                WebSearchTool(),
+                AcademicCalendarTool(),
+                KnowledgeSearchTool(kb_service),
+            ],
+            prompts = get_prompt(),
+            checkpointer = saver,
+            summary_model = DashScopeProvider(model="qwen3.7-flash"),
+        )
+        # 记忆抽取用便宜的小模型，与摘要模型共用即可
+        app.state.memory_extractor = MemoryExtractor(
+            DashScopeProvider(model="qwen3.7-flash")
+        )
+        app.state.memory_jobs = MemoryJobs(pg_pool, app.state.memory_extractor)
+        yield
 
-    pg_pool.close()
-    saver_pool.close()
 
 def get_current_user(x_user_id: str | None = Header(default=None)) -> dict:
 
@@ -181,7 +177,7 @@ def get_service(request: Request):
         yield SessionService(
             PostgresSessionRepository(conn),
             request.app.state.runtime,
-            getattr(request.app.state, "memory_extractor", None),
+            runs=request.app.state.runs,
         )
 
 
@@ -235,7 +231,11 @@ async def delete_session(
         user: dict = Depends(get_current_user),
         service: SessionService = Depends(get_service)
 ):
-    if not service.delete_session(user["id"], session_id):
+    try:
+        deleted = service.delete_session(user["id"], session_id)
+    except SessionBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail=f"会话不存在：{session_id}")
     return {"deleted": session_id}
 
@@ -243,8 +243,9 @@ async def delete_session(
 @app.post("/api/chat")
 async def chat(
         req: ChatRequest,
+        request: Request,
+        background: BackgroundTasks,
         user: dict = Depends(get_current_user),
-        service: SessionService = Depends(get_service)
 ):
 
     root = Path(__file__).resolve().parent.parent
@@ -256,8 +257,18 @@ async def chat(
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"图片不存在：{p.name}")
 
-    try:
-        stream = service.send_message(
+    resources = ExitStack()
+
+    def prepare_run():
+        conn = resources.enter_context(request.app.state.pg_pool.connection())
+        service = SessionService(
+            PostgresSessionRepository(conn), request.app.state.runtime,
+            runs=request.app.state.runs,
+            on_complete=lambda uid, text, answer: background.add_task(
+                request.app.state.memory_jobs.run, uid, text, answer,
+            ),
+        )
+        return service.send_message(
             user["id"],
             req.session_id,
             build_query(
@@ -269,14 +280,28 @@ async def chat(
             image_urls = [f"/uploads/{Path(p).name}" for p in req.images],
             reasoning = req.reasoning,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+
+    try:
+        stream = await run_in_threadpool(prepare_run)
+    except SessionBusyError as exc:
+        resources.close()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        resources.close()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BaseException:
+        resources.close()
+        raise
 
     def sse():
         for event in stream:
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-    return StreamingResponse(sse(), media_type="text/event-stream")
+    return ChatStreamingResponse(
+        sse(), run=stream, cleanup=resources.close,
+        background=background, media_type="text/event-stream",
+    )
+
 
 
 
@@ -388,10 +413,11 @@ def _serialize_doc(row: dict) -> dict:
 
 def _bootstrap_registry(repo: KbDocumentRepository, service: KnowledgeService) -> None:
     """登记表为空时，用 Milvus 现有文档回填一次（脚本入库的历史数据）。"""
-    docs = service.list_documents()
-    if docs:
-        repo.upsert_ready_from_milvus(docs)
-        logger.info("知识库登记表已回填 %d 份文档", len(docs))
+    with service.registry_lock:
+        docs = service.list_documents()
+        if docs:
+            repo.upsert_ready_from_milvus(docs)
+            logger.info("知识库登记表已回填 %d 份文档", len(docs))
 
 
 @app.get("/api/knowledge/documents")
@@ -508,10 +534,11 @@ def sync_knowledge(
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo),
 ):
-    docs = service.list_documents()
-    upserted = repo.upsert_ready_from_milvus(docs)
-    removed = repo.delete_missing({d["file_md5"] for d in docs})
-    return {"scanned": len(docs), "upserted": upserted, "removed": removed}
+    with service.registry_lock:
+        docs = service.list_documents()
+        upserted = repo.upsert_ready_from_milvus(docs)
+        removed = repo.delete_missing({d["file_md5"] for d in docs})
+        return {"scanned": len(docs), "upserted": upserted, "removed": removed}
 
 
 @app.delete("/api/knowledge/documents/{file_md5}")
@@ -520,28 +547,29 @@ def delete_knowledge_document(
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo),
 ):
-    doc = repo.get(file_md5)
-    if doc and doc["status"] in ("pending", "processing"):
-        raise HTTPException(status_code=409, detail="文档正在处理中，请稍后再试")
+    with service.registry_lock:
+        doc = repo.get(file_md5)
+        if doc and doc["status"] in ("pending", "processing"):
+            raise HTTPException(status_code=409, detail="文档正在处理中，请稍后再试")
 
-    # del_document 返回 bool（是否删到了行），块数用删除前查到的 chunk_count
-    removed = service.del_document(file_md5)
-    repo.delete(file_md5)
-    if not removed and doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
-    chunks = int((doc or {}).get("chunk_count") or 0)
+        # del_document 返回 bool（是否删到了行），块数用删除前查到的 chunk_count
+        removed = service.del_document(file_md5)
+        repo.delete(file_md5)
+        if not removed and doc is None:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        chunks = int((doc or {}).get("chunk_count") or 0)
 
-    # 只删上传目录里的源文件；历史脚本入库的文件不在这个目录下，不碰
-    source = (doc or {}).get("source_path")
-    if source:
-        path = Path(source).resolve()
-        try:
-            if path.is_file() and path.is_relative_to(KNOWLEDGE_UPLOAD_DIR.resolve()):
-                path.unlink()
-        except OSError:
-            logger.warning("删除源文件失败：%s", path, exc_info=True)
+        # 只删上传目录里的源文件；历史脚本入库的文件不在这个目录下，不碰
+        source = (doc or {}).get("source_path")
+        if source:
+            path = Path(source).resolve()
+            try:
+                if path.is_file() and path.is_relative_to(KNOWLEDGE_UPLOAD_DIR.resolve()):
+                    path.unlink()
+            except OSError:
+                logger.warning("删除源文件失败：%s", path, exc_info=True)
 
-    return {"deleted": file_md5, "chunks_deleted": chunks}
+        return {"deleted": file_md5, "chunks_deleted": chunks}
 
 
 def run_ingest_job(
@@ -551,6 +579,7 @@ def run_ingest_job(
         source_path: Path,
         title: str | None,
         display_name: str,
+        retry_failed: bool = False,
 ) -> None:
     """后台入库。同步函数由 Starlette 丢进线程池，不会阻塞事件循环。
 
@@ -565,19 +594,23 @@ def run_ingest_job(
         if suffix in {".md", ".txt"}:
             # md/txt 跳过 MinerU：本地转 content_list 快且稳定
             items, h1 = md_to_content_list(source_path, title=title)
-            service.load_document(
+            doc = service.load_document(
                 source_path,
                 content_list=items,
                 title=title or h1,
                 on_stage=stage,
+                replace_existing=retry_failed,
             )
         else:
-            service.load_document(source_path, title=title, on_stage=stage)
+            doc = service.load_document(
+                source_path, title=title, on_stage=stage, replace_existing=retry_failed,
+            )
 
-        doc = service.get_document(file_md5)
-        count = int((doc or {}).get("chunk_count") or 0)
+        count = int(doc.get("chunk_count") or 0)
+        if count <= 0:
+            raise RuntimeError("入库结果未确认有效切片")
         resolved_name = (doc or {}).get("file_name") or display_name
-        with pool.connection() as conn:
+        with pool.connection() as conn, service.registry_lock:
             KbDocumentRepository(conn).mark_ready(
                 file_md5, count, file_name=resolved_name
             )
@@ -600,7 +633,7 @@ async def upload_knowledge_document(
         file: UploadFile = File(...),
         title: str | None = Form(None),
         service: KnowledgeService = Depends(get_knowledge),
-        repo: KbDocumentRepository = Depends(get_kb_repo),
+        repo: KbDocumentRepository = Depends(get_kb_repo, scope="function"),
 ):
     original = Path(file.filename or "document")
     suffix = original.suffix.lower()
@@ -641,26 +674,31 @@ async def upload_knowledge_document(
         raise HTTPException(status_code=400, detail="文件为空")
 
     file_md5 = digest.hexdigest()
-    existing = repo.get(file_md5)
-    if existing and existing["status"] == "ready":
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=409, detail="该文档已在知识库中")
-    if existing and existing["status"] in ("pending", "processing"):
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=409, detail="该文档正在处理中")
-
-    final_path = KNOWLEDGE_UPLOAD_DIR / f"{file_md5[:8]}-{safe_stem}{suffix}"
-    tmp_path.replace(final_path)
-
+    final_path = KNOWLEDGE_UPLOAD_DIR / f"{file_md5}-{uuid.uuid4().hex}-{safe_stem}{suffix}"
     display_name = title or original.name
-    repo.upsert_pending(
-        file_md5,
-        file_name=display_name,
-        original_name=original.name,
-        file_type=suffix.lstrip("."),
-        file_size=total,
-        source_path=str(final_path),
-    )
+
+    def claim_upload():
+        with service.registry_lock:
+            existing = repo.get(file_md5)
+            retry_failed = bool(existing and existing["status"] == "failed")
+            claimed = repo.upsert_pending(
+                file_md5, file_name=display_name, original_name=original.name,
+                file_type=suffix.lstrip("."), file_size=total, source_path=str(final_path),
+            )
+            if not claimed:
+                raise HTTPException(status_code=409, detail="该文档已入库或正在处理中")
+            try:
+                tmp_path.replace(final_path)
+            except Exception as exc:
+                repo.mark_failed(file_md5, f"保存上传文件失败：{exc}")
+                raise
+            return retry_failed
+
+    try:
+        retry_failed = await run_in_threadpool(claim_upload)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
     background.add_task(
         run_ingest_job,
         request.app.state.pg_pool,
@@ -669,6 +707,7 @@ async def upload_knowledge_document(
         final_path,
         title,
         display_name,
+        retry_failed,
     )
     return {
         "file_md5": file_md5,

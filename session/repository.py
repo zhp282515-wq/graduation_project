@@ -235,6 +235,22 @@ class PostgresSessionRepository:
         self._conn.commit()
         return _to_message(row)
 
+    def complete_turn(
+        self, session_id: str, content: str, *, token_usage: dict[str, Any] | None = None,
+    ) -> None:
+        """助手回答与会话时间一起提交；适用于 autocommit 连接。"""
+        with self._conn.transaction():
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO messages (session_id, role, content, token_usage) VALUES (%s, 'assistant', %s, %s)",
+                    (session_id, content, Jsonb(token_usage) if token_usage is not None else None),
+                )
+                cur.execute("UPDATE sessions SET updated_at = now() WHERE id = %s", (session_id,))
+                if cur.rowcount != 1:
+                    raise ValueError("会话已不存在，无法保存回答")
+        # 兼容脚本传入的非 autocommit 连接（读取历史可能已开启外层事务）。
+        self._conn.commit()
+
     def get_messages(self, user_id: str, session_id: str) -> list[Message]:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(

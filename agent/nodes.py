@@ -374,16 +374,20 @@ def create_nodes(
         old_summary = state.get("summary") or ""
         start = time.perf_counter()
         logger.info(f"正在压缩摘要...")
-        new_summary, _ = summarizer.run(
-            messages=messages[summary_upto:boundary],
-            instruction=(
-                (f"【已有摘要】\n{old_summary}\n\n" if old_summary else "")
-                + "请把【已有摘要】与上面的新增对话合并成一份新的滚动摘要。\n"
-                "保留：用户目标与约束、已确认的结论、关键事实与数据、仍未解决的问题。\n"
-                "丢弃：寒暄、重复表述、已被推翻的中间过程。\n"
-                "直接输出摘要正文，不要加前缀，不要编造材料中没有的信息。"
-            ),
-        )
+        try:
+            new_summary, _ = summarizer.run(
+                messages=messages[summary_upto:boundary],
+                instruction=(
+                    (f"【已有摘要】\n{old_summary}\n\n" if old_summary else "")
+                    + "请把【已有摘要】与上面的新增对话合并成一份新的滚动摘要。\n"
+                    "保留：用户目标与约束、已确认的结论、关键事实与数据、仍未解决的问题。\n"
+                    "丢弃：寒暄、重复表述、已被推翻的中间过程。\n"
+                    "直接输出摘要正文，不要加前缀，不要编造材料中没有的信息。"
+                ),
+            )
+        except Exception:
+            logger.exception("历史压缩失败，保留原摘要与窗口")
+            return {}
         if not new_summary.strip():
             return {}          # 摘要失败就保留旧摘要，下轮再试
 

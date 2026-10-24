@@ -71,8 +71,8 @@ class KbDocumentRepository:
         file_type: str,
         file_size: int,
         source_path: str | None,
-    ) -> None:
-        """登记一次新任务。已存在（失败重试）时重置状态。"""
+    ) -> bool:
+        """原子抢占新任务或失败重试；已有可用/在途任务返回 False。"""
         with self._conn.cursor() as cur:
             cur.execute(
                 """
@@ -90,11 +90,16 @@ class KbDocumentRepository:
                     error       = NULL,
                     source_path = EXCLUDED.source_path,
                     updated_at  = now(),
-                    ingested_at = NULL
+                    ingested_at = NULL,
+                    chunk_count = NULL
+                WHERE kb_documents.status = 'failed'
+                RETURNING file_md5
                 """,
                 (file_md5, file_name, original_name, file_type, file_size, source_path),
             )
+            claimed = cur.fetchone() is not None
         self._conn.commit()
+        return claimed
 
     def set_processing(self, file_md5: str, stage: str) -> None:
         with self._conn.cursor() as cur:
@@ -109,6 +114,8 @@ class KbDocumentRepository:
         self._conn.commit()
 
     def mark_ready(self, file_md5: str, chunk_count: int, *, file_name: str | None = None) -> None:
+        if chunk_count <= 0:
+            raise ValueError("完整入库必须包含有效切片")
         with self._conn.cursor() as cur:
             cur.execute(
                 """
@@ -244,6 +251,7 @@ class KbDocumentRepository:
         """把 Milvus 里已有的文档补登记为 ready（脚本入库的历史数据、一次性回填）。"""
         if not docs:
             return 0
+        inserted = 0
         with self._conn.cursor() as cur:
             for d in docs:
                 cur.execute(
@@ -262,18 +270,18 @@ class KbDocumentRepository:
                         int(d.get("chunk_count") or 0),
                     ),
                 )
-            inserted = cur.rowcount
+                inserted += cur.rowcount
         self._conn.commit()
         return inserted
 
     def delete_missing(self, alive: set[str]) -> int:
-        """删掉 Milvus 里已不存在的登记行。"""
+        """只清理缺失的 ready 登记；保留在途任务与失败记录。"""
         with self._conn.cursor() as cur:
             if not alive:
-                cur.execute("DELETE FROM kb_documents")
+                cur.execute("DELETE FROM kb_documents WHERE status = 'ready'")
             else:
                 cur.execute(
-                    "DELETE FROM kb_documents WHERE NOT (file_md5 = ANY(%s))",
+                    "DELETE FROM kb_documents WHERE status = 'ready' AND NOT (file_md5 = ANY(%s))",
                     (list(alive),),
                 )
             n = cur.rowcount

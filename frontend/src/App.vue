@@ -312,6 +312,8 @@ async function send() {
       reply.error = e.message
     }
   } finally {
+    reply.streaming = false
+    reply.toolName = null
     st.streaming = false
     controllers.delete(sid)
     // 首条消息会自动改标题，刷新列表
@@ -375,10 +377,6 @@ async function removeSession(session) {
     danger: true,
     onConfirm: async () => {
       try {
-        // 该会话正在生成时，先断开它的请求
-        controllers.get(session.id)?.abort()
-        controllers.delete(session.id)
-
         await deleteSession(session.id)
         cache.delete(session.id)
 

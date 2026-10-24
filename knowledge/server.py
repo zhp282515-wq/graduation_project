@@ -1,6 +1,7 @@
 import hashlib
 from pathlib import Path
 from typing import Any, Callable
+from threading import RLock
 
 from knowledge.chunking import chunk_content_list
 from knowledge.mineru_parser import MineruParser
@@ -32,11 +33,33 @@ _FUSION_MIN_SCORE = 0.01
 class KnowledgeService:
 
     def __init__(self):
-        self.store = MilvusVectorStore()
-        self.store.ensure_collection()
-        self.embedder = DashScopeEmbedding()
-        self.parser = MineruParser()
-        self.reranker = DashScopeReranker()
+        self.registry_lock = RLock()
+        self.store = None
+        self.parser = None
+        try:
+            self.store = MilvusVectorStore()
+            self.store.ensure_collection()
+            self.embedder = DashScopeEmbedding()
+            self.parser = MineruParser()
+            self.reranker = DashScopeReranker()
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        for resource in (self.parser, getattr(self.store, "client", None)):
+            try:
+                if resource is not None:
+                    resource.close()
+            except Exception:
+                logger.warning("关闭知识库资源失败", exc_info=True)
+
+    def verify_document(self, file_md5: str, expected_count: int | None = None) -> dict[str, Any]:
+        doc = self.store.get_doc_status(file_md5, consistency_level="Strong")
+        count = int((doc or {}).get("chunk_count") or 0)
+        if count <= 0 or (expected_count is not None and count != expected_count):
+            raise RuntimeError(f"文档入库校验失败：预期 {expected_count} 块，实际 {count} 块")
+        return doc
 
     def _get_md5_hex(self, file_path: str | Path) -> str:
         """计算并返回当前文档内容的 md5 十六进制串(不对库做判断)。"""
@@ -49,13 +72,11 @@ class KnowledgeService:
 
     def save_md5_hex(self, file_md5: str) -> bool:
         """文件内容已成功写入 collection 后调用,记录其 md5 去重状态。
-        md5 作为 file_md5 字段随向量块一起持久化在 Milvus,这里校验该文件
-        确实已有块落库,若没有则提示(真正落库在 load_document 完成)。
+        md5 随向量块持久化。强一致确认至少一个块；失败抛异常。
+        完整入库还需通过 verify_document 比较预期块数。
         """
         # 刚 insert 完就查询，默认 Bounded 一致性可能还看不到新数据，必须用 Strong。
-        if self.store.get_doc_status(file_md5, consistency_level="Strong") is None:
-            logger.warning("未找到 file_md5=%s 的知识块，入库可能失败", file_md5)
-            return False
+        self.verify_document(file_md5)
         return True
 
     def del_md5_hex(self, file_md5: str) -> bool:
@@ -72,6 +93,7 @@ class KnowledgeService:
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
         on_stage: Callable[[str], None] | None = None,
+        replace_existing: bool = False,
     ) -> dict[str, Any]:
         """文档的解析、分片、入库。md5 相同则跳过。
 
@@ -82,9 +104,12 @@ class KnowledgeService:
         """
         path = Path(file_path)
         file_md5 = self._get_md5_hex(path)
-        if self.check_md5_hex(file_md5):
+        if replace_existing:
+            # 仅用于登记表中失败任务的显式重试，清理该哈希的残留块。
+            self.store.delete_by_md5(file_md5)
+        elif self.store.get_doc_status(file_md5, consistency_level="Strong") is not None:
             logger.info("文档已入库，跳过：%s (file_md5=%s)", path.name, file_md5)
-            return {"file_md5": file_md5, "inserted": 0, "skipped": True}
+            return {**self.verify_document(file_md5), "inserted": 0, "skipped": True}
 
         if on_stage is not None:
             on_stage("parsing")
@@ -94,9 +119,13 @@ class KnowledgeService:
 
         chunks = chunk_content_list(content_list, doc_title=title or path.stem)
         texts = [chunk.text for chunk in chunks]
+        if not texts or any(not text.strip() for text in texts):
+            raise ValueError("文档没有有效切片")
         if on_stage is not None:
             on_stage("embedding")
         vectors = self.embedder.embed_texts(texts)
+        if len(vectors) != len(texts):
+            raise ValueError("嵌入向量数与切片数不一致")
         metadatas = [
             {"section_path": c.section_path, "block_type": c.block_type, "page": c.page}
             for c in chunks
@@ -113,8 +142,10 @@ class KnowledgeService:
             metadatas=metadatas,
             doc_metadata=metadata,
         )
-        self.save_md5_hex(file_md5)
-        return {"file_md5": file_md5, "inserted": inserted, "skipped": False}
+        if inserted != len(texts):
+            raise RuntimeError(f"文档仅写入 {inserted}/{len(texts)} 块")
+        doc = self.verify_document(file_md5, expected_count=len(texts))
+        return {**doc, "inserted": inserted, "skipped": False}
 
     def list_documents(self) -> list[dict[str, Any]]:
         """列出库中所有文档"""
@@ -125,6 +156,7 @@ class KnowledgeService:
             filter="chunk_index >= 0",
             output_fields=["id", "file_md5", "file_name", "file_type", "file_size"],
             batch_size=1000,
+            consistency_level="Strong",
         )
         try:
             while batch := iterator.next():

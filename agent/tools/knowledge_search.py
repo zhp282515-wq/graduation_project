@@ -7,10 +7,13 @@ from utils.logger_tool import logger
 from utils.second_tool import fmt_duration
 
 
+_UNSET = object()
+
+
 class KnowledgeSearchTool(BaseTool):
-    def __init__(self, service: KnowledgeService | None = None):
-        # 生产环境由 lifespan 注入单例，避免重复建 Milvus 客户端与模型客户端
-        self.service = service or KnowledgeService()
+    def __init__(self, service=_UNSET):
+        # 不传参数保持脚本用法；显式 None 表示服务不可用，禁止重试初始化。
+        self.service = KnowledgeService() if service is _UNSET else service
 
     @property
     def name(self) -> str:
@@ -42,6 +45,8 @@ class KnowledgeSearchTool(BaseTool):
         }
 
     def run(self, **kwargs) -> ToolResult:
+        if self.service is None:
+            raise ToolError("校园知识库暂不可用，请稍后联系维护者恢复服务。")
         query = kwargs.get("query", "")
         if not query:
             raise ToolError("未提供检索内容")
