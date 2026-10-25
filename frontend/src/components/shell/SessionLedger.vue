@@ -8,6 +8,9 @@ import { dateBucket, relativeTime, sessionTimestamp } from '../../utils/format'
 import { sessionTitle } from '../../utils/history'
 import Icon from '../ui/Icon.vue'
 
+const props = defineProps({
+  inline: { type: Boolean, default: false },
+})
 const ui = useUiStore()
 const conversation = useConversationStore()
 const router = useRouter()
@@ -118,17 +121,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport to="body" :disabled="props.inline">
     <Transition name="fade">
-      <div v-if="ui.ledgerOpen" class="scrim" @click="ui.openLedger(false)" />
+      <div v-if="!props.inline && ui.ledgerOpen" class="scrim" @click="ui.openLedger(false)" />
     </Transition>
-    <Transition name="sheet">
+    <Transition :name="props.inline ? 'inline' : 'sheet'">
       <aside
-        v-if="ui.ledgerOpen"
+        v-if="props.inline || ui.ledgerOpen"
         id="session-ledger"
-        class="sheet ledger"
-        role="dialog"
-        aria-modal="true"
+        class="ledger"
+        :class="props.inline ? 'ledger--inline' : 'sheet'"
+        :role="props.inline ? 'complementary' : 'dialog'"
+        :aria-modal="props.inline ? undefined : 'true'"
         aria-label="会话档案"
       >
         <header class="ledger-head">
@@ -136,9 +140,28 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <p class="eyebrow">会话档案 · SESSIONS</p>
             <h2 class="serif">所有提问都在这里</h2>
           </div>
-          <button type="button" class="icon-btn" aria-label="关闭会话档案" @click="ui.openLedger(false)">
-            <Icon name="close" :size="16" />
-          </button>
+          <div class="ledger-actions">
+            <button
+              type="button"
+              class="icon-btn"
+              :class="{ 'is-on': props.inline }"
+              :aria-pressed="props.inline"
+              :title="props.inline ? '取消常驻' : '常驻为左侧栏'"
+              :aria-label="props.inline ? '取消常驻会话档案' : '把会话档案常驻为左侧栏'"
+              @click="ui.toggleLedgerPinned()"
+            >
+              <Icon name="pin" :size="15" />
+            </button>
+            <button
+              v-if="!props.inline"
+              type="button"
+              class="icon-btn"
+              aria-label="关闭会话档案"
+              @click="ui.openLedger(false)"
+            >
+              <Icon name="close" :size="16" />
+            </button>
+          </div>
         </header>
 
         <div class="ledger-tools">
@@ -224,7 +247,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <Icon :name="ui.isNight ? 'sun' : 'moon'" :size="12" />
             {{ ui.isNight ? '切换到纸本' : '切换到星夜' }}
           </button>
-          <span class="mono hint">↑↓ 选择 · ⏎ 打开 · esc 关闭</span>
+          <span class="mono hint">{{ props.inline ? '↑↓ 选择 · ⏎ 打开' : '↑↓ 选择 · ⏎ 打开 · esc 关闭' }}</span>
         </footer>
       </aside>
     </Transition>
@@ -234,6 +257,53 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 <style scoped>
 .ledger {
   width: min(440px, 100vw);
+}
+
+.ledger-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 常驻模式：成为 shell 的第二列，不再浮层化。 */
+.ledger--inline {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.ledger--inline .ledger-head {
+  padding: 22px 18px 14px;
+}
+
+.ledger--inline .ledger-head h2 {
+  font-size: 18px;
+}
+
+.ledger-actions .icon-btn.is-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ledger--inline .ledger-tools {
+  padding: 12px 18px;
+}
+
+.ledger--inline .ledger-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.ledger--inline .ledger-foot {
+  padding: 12px 18px;
 }
 
 .ledger-head {

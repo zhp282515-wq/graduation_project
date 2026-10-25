@@ -149,6 +149,18 @@ function handleRegenerate(turnKey) {
 }
 
 /** 失败后把这一轮的问题与图片放回书写台，等价旧版的「重新填写问题」。 */
+function openLedgerPanel() {
+  if (ui.ledgerPinned) {
+    if (window.innerWidth >= 1100) {
+      document.querySelector('.ledger--inline input[type="search"]')?.focus()
+      return
+    }
+    ui.openLedger(true, true)
+    return
+  }
+  ui.openLedger()
+}
+
 function handleRefill(turn) {
   if (!turn) return
   composer.value?.setText(turn.userText || '')
@@ -263,7 +275,7 @@ onBeforeUnmount(() => {
         <h1 class="head-title">{{ title }}</h1>
       </div>
       <div class="head-actions">
-        <button type="button" class="btn ghost ledger-btn" title="会话档案（⌘J）" @click="ui.openLedger()">
+        <button type="button" class="btn ghost ledger-btn" title="会话档案（⌘J）" @click="openLedgerPanel">
           <Icon name="archive" :size="13" />
           <span class="ledger-label">会话档案</span>
           <span v-if="conversations.sessions.length" class="badge mono">{{ conversations.sessions.length }}</span>

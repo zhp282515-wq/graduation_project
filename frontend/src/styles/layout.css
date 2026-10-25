@@ -15,6 +15,10 @@
   min-height: 0;
 }
 
+.shell.has-ledger {
+  grid-template-columns: var(--rail-w) 312px minmax(0, 1fr);
+}
+
 .main {
   position: relative;
   min-width: 0;

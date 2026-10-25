@@ -7,6 +7,18 @@ import Icon from '../ui/Icon.vue'
 import sealUrl from '../../assets/school-seal.svg'
 
 const ui = useUiStore()
+
+function openLedgerFromRail() {
+  if (ui.ledgerPinned) {
+    if (window.innerWidth >= 1100) {
+      document.querySelector('.ledger--inline input[type="search"]')?.focus()
+      return
+    }
+    ui.openLedger(true, true)
+    return
+  }
+  ui.openLedger(!ui.ledgerOpen)
+}
 const conversation = useConversationStore()
 const route = useRoute()
 
@@ -50,7 +62,7 @@ const historyCount = computed(() => conversation.sessions.length)
         class="rail-tool"
         :aria-expanded="ui.ledgerOpen"
         aria-controls="session-ledger"
-        @click="ui.openLedger(!ui.ledgerOpen)"
+        @click="openLedgerFromRail"
       >
         <Icon name="message" :size="17" />
         <span class="tool-label">会话</span>
