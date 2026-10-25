@@ -65,7 +65,7 @@ const FRAGMENT = `
   }
 `
 
-function hueColor(hue, lightness = 0.62, saturation = 0.55) {
+function hueColor(hue, lightness = 0.74, saturation = 0.2) {
   return new THREE.Color().setHSL(((hue % 360) + 360) % 360 / 360, saturation, lightness)
 }
 
@@ -135,6 +135,7 @@ export function createStarField(container, options = {}) {
     onHover = () => {},
     onLabels = null,
   labelsVisible: labelsVisibleOption = true,
+  labelLimit: labelLimitOption = 0,
     autoRotate = true,
     reducedMotion: reduceOption = null,
   } = options
@@ -198,11 +199,11 @@ export function createStarField(container, options = {}) {
   const slotById = new Map()
   let labels = []
   let labelsVisible = labelsVisibleOption !== false
+  let labelLimit = Math.max(0, Number(labelLimitOption) || 0)
   let labelSink = typeof onLabels === 'function' ? onLabels : null
   let lastLabelPush = 0
   let farField = null
-  let rings = null
-  let pointList = []
+    let pointList = []
   let pointIndex = new Map()
   let docRadius = new Map()
   let selectedPoint = null
@@ -213,6 +214,7 @@ export function createStarField(container, options = {}) {
   let frameId = 0
   let boundsRadius = 500
   let fitRadius = 90
+  let fitDistanceRef = 120
   let hasData = false
 
   const raycaster = new THREE.Raycaster()
@@ -257,6 +259,10 @@ export function createStarField(container, options = {}) {
   function setLabelsVisible(value) {
     labelsVisible = Boolean(value)
     if (!labelsVisible && labelSink) labelSink([])
+  }
+
+  function setLabelLimit(value) {
+    labelLimit = Math.max(0, Number(value) || 0)
   }
 
   function setAutoPaused(reason, paused) {
@@ -318,7 +324,7 @@ export function createStarField(container, options = {}) {
     const phases = new Float32Array(count)
     const visible = new Float32Array(count).fill(1)
     const emphasis = new Float32Array(count)
-    const palette = [0x9fb2d8, 0xd8c7a2, 0xa9c9d0, 0xc9b6d8]
+    const palette = [0xb9b2a2, 0xd6c9ae, 0xa8b0ad, 0xcbbfae]
     for (let i = 0; i < count; i += 1) {
       const radius = 1500 + Math.random() * 1700
       const theta = Math.random() * Math.PI * 2
@@ -351,44 +357,6 @@ export function createStarField(container, options = {}) {
     return new THREE.Points(geometry, material)
   }
 
-  function buildRings(radius) {
-    const group = new THREE.Group()
-    const dim = 0x6d7f9a
-    const radii = [radius * 0.72, radius * 1.02, radius * 1.42]
-    radii.forEach((value, index) => {
-      const material = new THREE.LineBasicMaterial({
-        color: dim,
-        transparent: true,
-        opacity: index === 1 ? 0.22 : 0.12,
-        depthWrite: false,
-      })
-      const line = new THREE.Line(circleGeometry(value), material)
-      group.add(line)
-    })
-
-    // 刻度：外环上的短径向线，制造"仪器"的手感。
-    const tickCount = 72
-    const tickPositions = []
-    const outer = radii[2]
-    for (let i = 0; i < tickCount; i += 1) {
-      const angle = (i / tickCount) * Math.PI * 2
-      const long = i % 6 === 0
-      const inner = outer * (long ? 0.965 : 0.985)
-      tickPositions.push(Math.cos(angle) * inner, 0, Math.sin(angle) * inner)
-      tickPositions.push(Math.cos(angle) * outer, 0, Math.sin(angle) * outer)
-    }
-    const tickGeometry = new THREE.BufferGeometry()
-    tickGeometry.setAttribute('position', new THREE.Float32BufferAttribute(tickPositions, 3))
-    group.add(
-      new THREE.LineSegments(
-        tickGeometry,
-        new THREE.LineBasicMaterial({ color: dim, transparent: true, opacity: 0.16, depthWrite: false }),
-      ),
-    )
-    group.rotation.x = 0
-    return group
-  }
-
   function buildNebulae(documents, points) {
     const group = new THREE.Group()
     const centers = new Map()
@@ -405,22 +373,22 @@ export function createStarField(container, options = {}) {
         Number(doc.center?.[1]) || 0,
         Number(doc.center?.[2]) || 0,
       )
-      const color = hueColor(doc.hue ?? 212, 0.55, 0.5)
+      const color = hueColor(doc.hue ?? 212, 0.62, 0.16)
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: glowTexture,
           color,
           transparent: true,
-          opacity: 0.11,
+          opacity: 0.05,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
         }),
       )
       const radius = Math.max(14, (Number(doc.radius) || 12) * 1.05)
       sprite.position.copy(center)
-      sprite.scale.setScalar(radius * 2.4)
+      sprite.scale.setScalar(radius * 2.0)
       group.add(sprite)
-      nebulaBreathe.push({ sprite, base: radius * 2.4, phase: (doc.hue ?? 0) * 0.071 })
+      nebulaBreathe.push({ sprite, base: radius * 2.0, phase: (doc.hue ?? 0) * 0.071 })
     })
     return group
   }
@@ -482,7 +450,7 @@ export function createStarField(container, options = {}) {
       const doc = docMap.get(point.file_md5)
       const hue = doc?.hue ?? 212
       const lightness = 0.58 + ((point.chunk_index % 7) / 7) * 0.16
-      const color = hueColor(hue, lightness, 0.58)
+      const color = hueColor(hue, lightness, 0.18)
       colors[index * 3] = color.r
       colors[index * 3 + 1] = color.g
       colors[index * 3 + 2] = color.b
@@ -576,7 +544,6 @@ export function createStarField(container, options = {}) {
     if (semanticLines) clearGroup(semanticLines)
     if (nebulaGroup) clearGroup(nebulaGroup)
     nebulaBreathe.length = 0
-    if (rings) clearGroup(rings)
 
     const withHue = documents.map((doc) => ({ ...doc }))
     starPoints = buildStars(points, withHue)
@@ -586,7 +553,7 @@ export function createStarField(container, options = {}) {
 
     labels = buildLabels(withHue)
 
-    chainLines = buildLines(chainPairs, { color: 0xa9bcd8, opacity: 0.032, vertexColors: true })
+    chainLines = buildLines(chainPairs, { color: 0xb3b7bd, opacity: 0.022, vertexColors: true })
     if (chainLines) root.add(chainLines)
 
     const edgePairs = edges
@@ -596,7 +563,7 @@ export function createStarField(container, options = {}) {
         return from && to ? { from, to } : null
       })
       .filter(Boolean)
-    semanticLines = buildLines(edgePairs, { color: 0x9c8fe0, opacity: 0.15 })
+    semanticLines = buildLines(edgePairs, { color: 0xb9a58e, opacity: 0.085 })
     if (semanticLines) root.add(semanticLines)
 
     // 尺度：用分片分布的中位数半径决定相机距离，少数离群星不会把镜头拉太远。
@@ -617,10 +584,6 @@ export function createStarField(container, options = {}) {
       fitRadius = Math.max(24, p80 * 1.35)
       boundsRadius = Math.max(fitRadius, distances[distances.length - 1] || fitRadius)
     }
-    rings = buildRings(fitRadius * 1.9)
-    rings.position.copy(center)
-    rings.position.y = center.y - fitRadius * 1.05
-    root.add(rings)
 
     if (!farField) {
       farField = buildFarField()
@@ -629,7 +592,11 @@ export function createStarField(container, options = {}) {
 
     controls.target.copy(center)
     const dir = new THREE.Vector3(0.44, 0.52, 1).normalize()
-    const fitDistance = fitRadius * 1.72
+    // 竖屏（手机）横向视野更窄，按宽高比适度拉远，避免星群被画面左右切掉。
+    const aspect = (container.clientWidth || 1) / Math.max(1, container.clientHeight || 1)
+    const aspectBoost = aspect < 1 ? Math.pow(1 / Math.max(0.4, aspect), 0.5) : 1
+    const fitDistance = fitRadius * 1.72 * aspectBoost
+    fitDistanceRef = fitDistance
     const fitPosition = center.clone().addScaledVector(dir, fitDistance)
     initialCamera = { position: fitPosition.clone(), target: center.clone() }
     camera.position.copy(center).addScaledVector(dir, fitDistance)
@@ -1018,7 +985,6 @@ export function createStarField(container, options = {}) {
       item.sprite.scale.setScalar(item.base * (1 + wave * 0.045))
       item.sprite.material.opacity = 0.105 + wave * 0.022
     }
-    if (rings) rings.rotation.y = elapsed * 0.012
     if (farField) farField.rotation.y = elapsed * 0.004
     if (root) root.rotation.y = Math.sin(elapsed * 0.03) * 0.02
     controls.update(dt)
@@ -1029,7 +995,8 @@ export function createStarField(container, options = {}) {
     const boxes = []
     const projected = tmpVec2
     const next = []
-    for (const label of labelsVisible ? labels : []) {
+    const visibleLabels = labelsVisible ? (labelLimit > 0 ? labels.slice(0, labelLimit) : labels) : []
+    for (const label of visibleLabels) {
       projected.copy(label.position).project(camera)
       if (projected.z > 1) continue
       const x = (projected.x * 0.5 + 0.5) * vw
@@ -1065,7 +1032,7 @@ export function createStarField(container, options = {}) {
     if (labelsVisible && now - lastLabelPush > 120) {
       lastLabelPush = now
       // 入场镜头还在远处时先不铺标签：星群缩成一小团，文字会挤在一起。
-      const far = camera.position.distanceTo(controls.target) > fitRadius * 2.05
+      const far = camera.position.distanceTo(controls.target) > fitDistanceRef * 1.18
       labelSink && labelSink(far ? [] : next)
     }
     frames += 1
@@ -1134,6 +1101,7 @@ export function createStarField(container, options = {}) {
     setAutoRotate,
     setAutoPaused,
     setLabelsVisible,
+    setLabelLimit,
     setReducedMotion(value) {
       reducedMotion = Boolean(value)
       autoSpeed = 0

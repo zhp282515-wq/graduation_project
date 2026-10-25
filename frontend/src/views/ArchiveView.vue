@@ -6,6 +6,7 @@ import { useUiStore } from '../stores/ui'
 import { useConfirm } from '../composables/confirm'
 import Icon from '../components/ui/Icon.vue'
 import { formatBytes, formatNumber, relativeTime, shortDocTitle } from '../utils/format'
+import sealUrl from '../assets/school-seal.svg'
 
 const route = useRoute()
 const router = useRouter()
@@ -513,11 +514,7 @@ onBeforeUnmount(() => {
         </template>
 
         <div v-else class="detail-empty">
-          <div class="empty-figure" aria-hidden="true">
-            <span class="ring" />
-            <span class="ring ring-2" />
-            <Icon name="archive" :size="26" />
-          </div>
+          <img class="empty-seal" :src="sealUrl" alt="江西师范大学校徽" width="52" height="43" />
           <h2 class="empty-title">档案室</h2>
           <p class="empty-text">
             左侧是知识库里的全部文档。选一份，查看它的元数据和每一个分片；
@@ -654,9 +651,10 @@ onBeforeUnmount(() => {
 
 .mini-select {
   height: 26px;
-  padding: 0 22px 0 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  padding: 0 20px 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   color: var(--ink-2);
   background-color: transparent;
   background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
@@ -673,7 +671,7 @@ onBeforeUnmount(() => {
 }
 
 .mini-select:hover {
-  border-color: var(--line-strong);
+  border-bottom-color: var(--ink-3);
   color: var(--ink);
 }
 

@@ -248,10 +248,6 @@ defineExpose({
     @dragleave.prevent="dragging = false"
     @drop.prevent="onDrop"
   >
-    <div class="composer-ticks" aria-hidden="true">
-      <span /><span /><span /><span />
-    </div>
-
     <div v-if="images.length" class="attach-strip">
       <figure v-for="item in images" :key="item.id" class="attach" :data-state="item.state">
         <img :src="item.preview" :alt="item.name" />
@@ -359,41 +355,6 @@ defineExpose({
 
 .composer.is-busy {
   background: var(--surface-2);
-}
-
-.composer-ticks span {
-  position: absolute;
-  width: 7px;
-  height: 7px;
-  border-color: var(--ink-4);
-  border-style: solid;
-  pointer-events: none;
-  opacity: 0.7;
-}
-
-.composer-ticks span:nth-child(1) {
-  top: -4px;
-  left: -4px;
-  border-width: 1px 0 0 1px;
-  opacity: 0.55;
-}
-
-.composer-ticks span:nth-child(2) {
-  top: -4px;
-  right: -4px;
-  border-width: 1px 1px 0 0;
-}
-
-.composer-ticks span:nth-child(3) {
-  bottom: -4px;
-  left: -4px;
-  border-width: 0 0 1px 1px;
-}
-
-.composer-ticks span:nth-child(4) {
-  bottom: -4px;
-  right: -4px;
-  border-width: 0 1px 1px 0;
 }
 
 .attach-strip {

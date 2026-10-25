@@ -71,8 +71,8 @@ function readAutoRotate() {
 const autoRotate = ref(readAutoRotate())
 
 function readLabelsOn() {
-  // 窄屏默认收起文档名，避免 9 个标签把星群盖住；用户手动打开后会记住选择。
-  const fallback = typeof window === 'undefined' ? true : window.innerWidth >= 900
+  // 窄屏默认也显示文档名，但引擎会把标签数量限制为 4 个，避免盖住星群。
+  const fallback = true
   try {
     const raw = window.localStorage.getItem(LABEL_KEY)
     if (raw === 'on') return true
@@ -145,6 +145,10 @@ const loading = computed(() => atlas.status === 'loading')
 const failed = computed(() => atlas.status === 'error')
 const empty = computed(() => atlas.status === 'ready' && !total.value)
 const results = computed(() => atlas.searchResults)
+
+const docsExpanded = ref(false)
+
+const docFilterList = computed(() => (docsExpanded.value ? docs.value : docs.value.slice(0, 8)))
 
 const docFilterName = computed(() => {
   if (!atlas.docFilter) return '全部文档'
@@ -472,10 +476,13 @@ onMounted(async () => {
     }
   })
 
+  // 窄屏只保留分片最多的 4 个文档名，避免文字盖住星群。
+  const narrow = window.innerWidth < 900
   engine = createStarField(stage.value, {
     autoRotate: autoRotate.value,
     reducedMotion: prefersReducedMotion.value,
     labelsVisible: labelsOn.value,
+    labelLimit: narrow ? 4 : 0,
     onSelect: onCanvasSelect,
     onHover: onCanvasHover,
     onLabels: (list) => {
@@ -614,7 +621,7 @@ onBeforeUnmount(() => {
         <ul v-if="results.length" class="result-list">
           <li v-for="point in results.slice(0, 7)" :key="point.id">
             <button type="button" class="result-row" :class="{ 'is-active': point.id === atlas.selectedId }" @click="selectPoint(point)">
-              <span class="result-hue" :style="{ background: `hsl(${docHue(point.file_md5)} 55% 62%)` }" />
+              <span class="result-hue" :style="{ background: `hsl(${docHue(point.file_md5)} 24% 68%)` }" />
               <span class="result-text">
                 <span class="result-doc">{{ docName(point.file_md5) }}</span>
                 <span class="result-snippet">{{ resultSnippet(point) }}</span>
@@ -638,7 +645,7 @@ onBeforeUnmount(() => {
             全部
           </button>
           <button
-            v-for="doc in docs.slice(0, 14)"
+            v-for="doc in docFilterList"
             :key="doc.file_md5"
             type="button"
             class="doc-chip"
@@ -646,11 +653,20 @@ onBeforeUnmount(() => {
             :title="`${docName(doc.file_md5)} · ${doc.chunk_count} 片`"
             @click="toggleDoc(doc.file_md5)"
           >
-            <span class="chip-hue" :style="{ background: `hsl(${doc.hue} 55% 62%)` }" />
+            <span class="chip-hue" :style="{ background: `hsl(${doc.hue} 24% 68%)` }" />
             {{ shortDocTitle(doc.original_name || doc.file_name, 12) }}
             <span class="mono chip-count">{{ doc.chunk_count }}</span>
           </button>
         </div>
+        <button
+          v-if="docs.length > 8"
+          type="button"
+          class="doc-more mono"
+          :aria-expanded="docsExpanded"
+          @click="docsExpanded = !docsExpanded"
+        >
+          {{ docsExpanded ? '收起文档' : `展开全部 ${docs.length} 篇` }}
+        </button>
 
         <p class="panel-label mono">类型</p>
         <div class="type-row">
@@ -746,12 +762,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="hud-bottom">
-      <div class="legend mono">
-        <span><span class="line-swatch chain" /> 顺序</span>
-        <span><span class="line-swatch semantic" /> 语义</span>
-        <span class="legend-sep">·</span>
-        <span>拖动旋转 · 滚轮缩放 · 悬停预览 · 点击星体</span>
-      </div>
+      <p class="legend mono">拖动旋转 · 滚轮缩放 · 悬停预览 · 点击星体</p>
       <button type="button" class="ghost-btn mono" @click="resetView">
         <Icon name="refresh" :size="12" />
         复位视角
@@ -765,7 +776,7 @@ onBeforeUnmount(() => {
         <header class="star-head">
           <div class="star-title">
             <p class="eyebrow mono">
-              <span class="star-hue" :style="{ background: `hsl(${docHue(selected.file_md5)} 55% 62%)` }" />
+              <span class="star-hue" :style="{ background: `hsl(${docHue(selected.file_md5)} 24% 68%)` }" />
               CHUNK · #{{ String(selected.chunk_index ?? 0).padStart(4, '0') }}
             </p>
             <h2>{{ docName(selected.file_md5) }}</h2>
@@ -1036,8 +1047,8 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 20px 26px 14px;
-  background: linear-gradient(to bottom, rgba(5, 6, 10, 0.85), transparent);
+  padding: 18px 24px 12px;
+  background: linear-gradient(to bottom, rgba(6, 7, 11, 0.72), transparent);
   pointer-events: none;
 }
 
@@ -1071,22 +1082,22 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  font-size: 10px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  font-size: 11px;
   white-space: nowrap;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   color: var(--ink-2);
-  background: rgba(7, 8, 13, 0.8);
-  backdrop-filter: blur(8px);
+  background: transparent;
   transition: color var(--t-fast), border-color var(--t-fast);
 }
 
 .ghost-btn:hover {
   color: var(--ink);
-  border-color: var(--ink-3);
+  border-bottom-color: var(--line-strong);
 }
 
 .ghost-btn.is-on {
@@ -1132,17 +1143,16 @@ onBeforeUnmount(() => {
 .panel {
   position: absolute;
   z-index: 7;
-  border: 1px solid rgba(237, 231, 218, 0.12);
-  background: rgba(7, 8, 13, 0.9);
-  backdrop-filter: blur(18px) saturate(120%);
-  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(237, 231, 218, 0.09);
+  background: rgba(9, 10, 14, 0.88);
+  box-shadow: none;
 }
 
 .left-panel {
   top: 86px;
   left: 22px;
-  width: 306px;
-  max-height: calc(100% - 176px);
+  width: 296px;
+  max-height: calc(100% - 172px);
   overflow-y: auto;
   border-radius: var(--r-md);
   animation: fade-up 420ms var(--ease-out) both;
@@ -1313,32 +1323,36 @@ onBeforeUnmount(() => {
 }
 
 .doc-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  display: grid;
+  gap: 1px;
+  margin-top: 2px;
 }
 
 .doc-chip {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  height: 23px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  font-size: 10px;
+  gap: 7px;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  font-size: 10.5px;
   color: var(--ink-3);
-  background: rgba(237, 231, 218, 0.04);
+  background: transparent;
 }
 
 .doc-chip:hover {
   color: var(--ink);
+  background: rgba(237, 231, 218, 0.05);
 }
 
 .doc-chip.is-on {
   color: var(--ink);
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
+  background: rgba(237, 231, 218, 0.07);
+  box-shadow: inset 2px 0 var(--accent);
 }
 
 .chip-hue {
@@ -1347,9 +1361,22 @@ onBeforeUnmount(() => {
   border-radius: 50%;
 }
 
+.doc-more {
+  margin: 8px 0 12px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ink-4);
+  text-align: left;
+}
+
+.doc-more:hover {
+  color: var(--accent);
+}
+
 .chip-count {
-  font-size: 8px;
-  opacity: 0.85;
+  margin-left: auto;
+  font-size: 9px;
+  opacity: 0.7;
 }
 
 .type-row {
@@ -1474,18 +1501,16 @@ onBeforeUnmount(() => {
   padding: 2px 5px 3px;
   border: 0;
   background: transparent;
-  color: rgba(237, 231, 218, 0.92);
-  font-family: var(--font-serif);
-  letter-spacing: 0.04em;
+  color: rgba(237, 231, 218, 0.8);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
   line-height: 1.25;
   white-space: nowrap;
   /* 文档名只是注记：不能挡住星体的悬停与点选，否则同一位置会出现“看得见却选不中”。 */
   pointer-events: none;
   /* 没有底板，靠两层暗投影把字从星云里"压"出来。 */
-  text-shadow:
-    0 1px 2px rgba(3, 4, 8, 0.95),
-    0 0 9px rgba(3, 4, 8, 0.9),
-    0 0 20px rgba(3, 4, 8, 0.6);
+  text-shadow: 0 1px 3px rgba(3, 4, 8, 0.92);
   transition:
     color 180ms ease,
     opacity 220ms var(--ease-out),
@@ -1493,11 +1518,7 @@ onBeforeUnmount(() => {
 }
 
 .doc-label:hover {
-  color: #f6dfae;
-  text-shadow:
-    0 1px 2px rgba(3, 4, 8, 1),
-    0 0 12px rgba(226, 104, 76, 0.45),
-    0 0 26px rgba(3, 4, 8, 0.7);
+  color: rgba(255, 250, 240, 0.98);
 }
 
 .doc-label-count {
@@ -1509,13 +1530,13 @@ onBeforeUnmount(() => {
 .hover-card {
   position: absolute;
   z-index: 6;
-  width: min(272px, 42vw);
+  width: min(268px, 42vw);
   padding: 9px 12px 10px;
-  border: 1px solid rgba(237, 231, 218, 0.16);
+  border: 1px solid rgba(237, 231, 218, 0.14);
   border-left: 2px solid var(--accent);
-  background: rgba(6, 7, 12, 0.94);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 18px 40px -28px rgba(0, 0, 0, 0.9);
+  border-radius: 4px;
+  background: rgba(8, 9, 13, 0.96);
+  box-shadow: 0 12px 28px -24px rgba(0, 0, 0, 0.9);
   pointer-events: none;
   animation: hover-in 160ms var(--ease-out) both;
 }
@@ -1899,6 +1920,18 @@ onBeforeUnmount(() => {
 
   .right-panel {
     width: 340px;
+  }
+}
+
+@media (max-width: 640px) {
+  .doc-label {
+    font-size: 10px;
+    letter-spacing: 0.01em;
+    padding: 1px 2px;
+  }
+
+  .doc-label .label-count {
+    font-size: 9px;
   }
 }
 

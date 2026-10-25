@@ -146,7 +146,7 @@ async function onBodyClick(event) {
       <div class="foot-meta mono">
         <span v-if="live && streaming" class="live-tag"><span class="live-dot" />生成中</span>
         <span v-else-if="elapsedLabel">{{ elapsedLabel }}</span>
-        <span v-if="answer.tokenTotal">{{ formatNumber(answer.tokenTotal) }} tokens</span>
+        <span v-if="answer.tokenTotal" class="meta-usage">{{ formatNumber(answer.tokenTotal) }} tokens</span>
         <span v-if="sources.length">{{ sourceKindLabel(sources[0]) }}</span>
       </div>
     </div>

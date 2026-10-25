@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useUiStore } from '../../stores/ui'
 import { useConversationStore } from '../../stores/conversations'
 import Icon from '../ui/Icon.vue'
+import sealUrl from '../../assets/school-seal.svg'
 
 const ui = useUiStore()
 const conversation = useConversationStore()
@@ -23,7 +24,7 @@ const historyCount = computed(() => conversation.sessions.length)
 <template>
   <nav class="rail" aria-label="主导航">
     <RouterLink to="/inquiry" class="seal" aria-label="星野台，返回问学">
-      <span class="seal-mark serif" aria-hidden="true">师</span>
+      <img class="seal-img" :src="sealUrl" alt="江西师范大学校徽" width="42" height="35" />
       <span class="seal-caption serif" aria-hidden="true">星野台</span>
     </RouterLink>
 
@@ -82,7 +83,7 @@ const historyCount = computed(() => conversation.sessions.length)
   gap: 26px;
   padding: 22px 0 18px;
   border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 55%, transparent), transparent 40%);
+  background: var(--bg);
 }
 
 .seal {
@@ -93,25 +94,16 @@ const historyCount = computed(() => conversation.sessions.length)
   text-decoration: none;
 }
 
-.seal-mark {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--accent);
-  border-radius: 4px;
-  color: var(--accent);
-  font-size: 19px;
-  line-height: 1;
-  letter-spacing: 0;
-  transform: rotate(-2deg);
-  box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 3px var(--accent-line);
-  transition: transform var(--t-base) var(--ease-out), background var(--t-base);
+.seal-img {
+  display: block;
+  width: 42px;
+  height: auto;
+  opacity: 0.92;
+  transition: opacity var(--t-base) var(--ease-out);
 }
 
-.seal:hover .seal-mark {
-  transform: rotate(0deg);
-  background: var(--accent-soft);
+.seal:hover .seal-img {
+  opacity: 1;
 }
 
 .seal-caption {

@@ -64,7 +64,9 @@
 
 - **双材质**：纸本（默认）与星夜。纸本 `#f2eee4` 纸面、`#1c1813` 墨、`#a3352a` 朱砂；星夜 `#07070b` 底、`#ece6d8` 墨、`#e2684c` 强调；星体色相按文档序号取 `DOC_HUES`。
 - **字体**：拉丁展示字 Instrument Serif、数据等宽 JetBrains Mono（均打包，无外链）；中文标题走宋体栈，正文走系统黑体栈，保证离线可用与中文观感。
-- **图形语汇**：发丝线、四角刻度、mono 编号（01 / 02）、仪器刻度环、印章式 logo 与发送键、拓扑式标注。
+- **品牌**：使用学校官方校徽 SVG（`src/assets/school-seal.svg`，原比例 `794×659`、`#B22222` 单色路径），只做尺寸缩放，不改配色与结构；出现在左侧栏（42 px）、扉页报头（28 px）与典藏空态（52 px），面积克制、不做水印堆叠。
+- **图形语汇**：发丝线、mono 编号（01 / 02）、朱砂印章与发送键；刻度环、光晕、霓虹、渐变网格已从星图中移除，只保留星体、星云（不透明度 ≈0.1）、真实星链与文档名注记。
+- **尺度系统**：圆角 `4 / 6 / 10 / 16`、按钮 `26 / 28 / 32`、发丝线 `1 px`、阴影只用两层极轻投影（`--shadow-soft` / `--shadow-sheet`），避免“到处浮起”的卡片感。
 - **动效**：只做有含义的过渡——视图进出 12 px 位移、抽屉 260 ms 缓出、星图相机 900–1100 ms easeInOutCubic、运行点呼吸、骨架微光；全部尊重 `prefers-reduced-motion`。
 - **可访问性**：所有可点区域有 `:focus-visible` 环、抽屉/面板有 Esc 关闭与焦点回收、对话框有焦点陷阱、图标按钮均有 `aria-label`、正文对比度按纸面/星夜分别校准。
 
@@ -286,16 +288,17 @@ $env:TEMP="D:\1oveb\毕业设计\.tmp"; $env:TMP=$env:TEMP   # Windows 沙箱下
 npm run build
 ```
 
-结果：`✓ built in 1.18s`，131 modules。产物：
+结果：`✓ built in 1.21s`，131 modules。产物：
 
 | 文件 | 原始 | gzip |
 | --- | --- | --- |
-| `index-*.js` | 161.03 kB | 62.09 kB |
-| `InquiryView-*.js` | 219.02 kB | 81.71 kB |
-| `AtlasView-*.js` | 35.08 kB | 13.94 kB |
-| `three-*.js`（仅星图路由加载） | 548.63 kB | 136.03 kB |
-| `ArchiveView / MemoryView` | 15.16 / 6.80 kB | — |
-| CSS 合计 | ≈78 kB | ≈17 kB |
+| `index-*.js` | 163.05 kB | 63.12 kB |
+| `InquiryView-*.js` | 222.08 kB | 82.79 kB |
+| `AtlasView-*.js` | 45.87 kB | 17.86 kB |
+| `three-*.js`（仅星图路由加载） | 548.62 kB | 136.03 kB |
+| `ArchiveView / MemoryView` | 15.13 / 6.79 kB | — |
+| CSS 合计 | ≈86 kB | ≈20 kB |
+| `school-seal-*.svg`（校徽，按需缓存） | 135.84 kB | 39.21 kB |
 
 Three.js 被拆到独立 chunk，只有进入 `/atlas` 才下载。构建仍会提示 `three` 体积 >500 kB，这是渲染库本身的成本。
 
@@ -323,17 +326,17 @@ npm test                                    # 6 files, 58 tests passed
 
 ## 8. 视觉验收记录
 
-截图目录：`../_devtools/final/`（2880×1800，DPR 2；共 21 张）。
+截图目录：`../_devtools/final/`（2880×1800，DPR 2；共 25 张）。
 
 | 文件 | 内容 |
 | --- | --- |
-| `01-inquiry-empty.png` | 问学扉页：宋体「问学」+ Instrument Serif 斜体、真实文档驱动的建议卡、右栏「CAMPUS LINKS 校园入口」、书写台 |
+| `01-inquiry-empty.png` | 问学扉页：官方校徽报头、宋体「问学」+ Instrument Serif 斜体、真实文档驱动的建议卡、右栏「CAMPUS LINKS 校园入口」、书写台 |
 | `02-inquiry-thread.png` | 多轮回答：表格、标题层级、出处条、操作行、tokens/耗时 |
 | `03-inquiry-source-sheet.png` | 出处抽屉：真实分片正文与文档元信息 |
 | `04-archive-list.png` | 典藏双栏：搜索、facet、排序、分页、状态点 |
 | `05-archive-detail.png` | 文档详情：元数据栅格、指纹、分片列表 |
 | `06-memory.png` | 记忆卡片：类别、时间、改写/删除 |
-| `07-atlas.png` | 星图总览：54 星群、文档标签、筛选面板、HUD、「自动观测」开关 |
+| `07-atlas.png` | 星图总览：54 星群、文档名注记、文字式筛选、底部操作说明、「自动观测」开关 |
 | `08-atlas-selected.png` | 选中真实分片：右侧详情（从星体 clip-path 展开）、章节、正文、动作 |
 | `21-atlas-hover.png` | 悬停预览：星体旁的分片卡片（星体只提亮，无圆环） |
 | `25-atlas-flight.png` | A→B 切换途中：面板内容交叉淡入、镜头沿弧线移动 |
@@ -346,7 +349,7 @@ npm test                                    # 6 files, 58 tests passed
 | `14-mobile-ledger.png` | 移动端会话档案（底部面板） |
 | `15-mobile-archive.png` | 移动端典藏列表 |
 | `16-mobile-memory.png` | 移动端记忆卡片 |
-| `17-mobile-atlas.png` | 移动端星图（面板默认收起、取景自适应） |
+| `17-mobile-atlas.png` | 移动端星图（面板默认收起、取景按宽高比拉远、只保留 4 个文档名） |
 | `18-command-palette.png` | ⌘K 面板：「校园入口 · 图书馆」分组与最近会话 |
 | `19-inquiry-campus-links.png` | 校园入口 6 条外链（hover 态：朱砂箭头）与「或者直接问」 |
 | `20-mobile-campus-links.png` | 移动端「校园入口」竖排列表 |
@@ -370,7 +373,7 @@ npm test                                    # 6 files, 58 tests passed
 | JS 堆 | 21 MB | 同上 |
 | 星图布局构建 | 2.01 s（冷） / 命中磁盘缓存 ~0.1 s | 54 文档 |
 | 对话首字 | 与后端模型一致（实测 1–2 s 内出现工具轨迹） | qwen3.8-flash |
-| 首屏 JS | 161 kB（gzip 62 kB） | three 延迟加载 |
+| 首屏 JS | 163 kB（gzip 63 kB） | three 延迟加载 |
 
 兼容性：
 

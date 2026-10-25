@@ -10,6 +10,7 @@ import SourceSheet from '../components/chat/SourceSheet.vue'
 import Icon from '../components/ui/Icon.vue'
 import { CAMPUS_LINKS } from '../config/campusLinks'
 import { formatNumber, shortDocTitle } from '../utils/format'
+import sealUrl from '../assets/school-seal.svg'
 
 const route = useRoute()
 const router = useRouter()
@@ -260,8 +261,10 @@ onBeforeUnmount(() => {
 
     <div ref="scroller" class="thread-scroll" @scroll.passive="onScroll">
       <div v-if="isEmpty" class="hero">
-        <div class="hero-mark" aria-hidden="true">
-          <span class="mono">JXNU · OBSERVATORY</span>
+        <div class="hero-mark">
+          <img class="hero-seal" :src="sealUrl" alt="江西师范大学校徽" width="28" height="23" />
+          <span class="hero-name">江西师范大学</span>
+          <span class="hero-role mono">校园知识助手</span>
           <span class="hair" />
           <span class="mono">2026</span>
         </div>
@@ -503,9 +506,9 @@ onBeforeUnmount(() => {
 }
 
 .hero {
-  max-width: 1040px;
+  max-width: var(--maxw);
   margin: 0 auto;
-  padding: clamp(24px, 3.6vh, 44px) clamp(20px, 4vw, 64px) 8px;
+  padding: clamp(18px, 3vh, 30px) var(--gutter) 8px;
   animation: fade-up 620ms var(--ease-out) both;
 }
 
@@ -515,14 +518,33 @@ onBeforeUnmount(() => {
   gap: 12px;
   color: var(--ink-3);
   font-size: var(--text-2xs);
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
+}
+
+.hero-seal {
+  flex: 0 0 auto;
+  width: 28px;
+  height: auto;
+  opacity: 0.9;
+}
+
+.hero-name {
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+
+.hero-role {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.12em;
+  color: var(--ink-4);
 }
 
 .hero-mark .hair {
   flex: 1;
   height: 1px;
   background: var(--line);
-  max-width: 320px;
 }
 
 .hero-title {
@@ -530,13 +552,13 @@ onBeforeUnmount(() => {
   align-items: baseline;
   gap: 22px;
   flex-wrap: wrap;
-  margin: 14px 0 0;
+  margin: 12px 0 0;
   font-weight: 400;
 }
 
 .hero-cn {
   font-family: var(--font-serif);
-  font-size: clamp(58px, 7.4vw, 92px);
+  font-size: clamp(54px, 6.2vw, 78px);
   line-height: 0.98;
   letter-spacing: 0.02em;
   color: var(--ink);
@@ -545,16 +567,16 @@ onBeforeUnmount(() => {
 .hero-latin {
   font-family: var(--font-display);
   font-style: italic;
-  font-size: clamp(20px, 2.4vw, 30px);
+  font-size: clamp(18px, 2vw, 24px);
   color: var(--ink-3);
   letter-spacing: 0.01em;
 }
 
 .hero-lede {
-  max-width: 560px;
-  margin: 16px 0 0;
-  font-size: var(--text-sm);
-  line-height: 1.8;
+  max-width: 520px;
+  margin: 14px 0 0;
+  font-size: 13.5px;
+  line-height: 1.85;
   color: var(--ink-2);
   text-wrap: pretty;
 }
@@ -598,8 +620,8 @@ onBeforeUnmount(() => {
 .suggest {
   position: relative;
   display: grid;
-  gap: 6px;
-  padding: 14px 16px 16px;
+  gap: 5px;
+  padding: 13px 14px 14px;
   text-align: left;
   background: var(--surface);
   transition: background var(--t-base), transform var(--t-base);
@@ -618,22 +640,26 @@ onBeforeUnmount(() => {
 
 .suggest-title {
   font-family: var(--font-serif);
-  font-size: 17px;
+  font-size: 15.5px;
   letter-spacing: 0.01em;
   color: var(--ink);
 }
 
 .suggest-prompt {
-  padding-right: 22px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  padding-right: 20px;
   font-size: var(--text-xs);
-  line-height: 1.7;
+  line-height: 1.65;
   color: var(--ink-3);
 }
 
 .suggest-arrow {
   position: absolute;
-  right: 16px;
-  top: 18px;
+  right: 14px;
+  top: 15px;
   color: var(--ink-4);
   transform: rotate(45deg);
   transition: transform var(--t-base) var(--ease-out), color var(--t-fast);
@@ -651,9 +677,9 @@ onBeforeUnmount(() => {
 }
 
 .quick {
-  padding: 9px 14px;
+  padding: 7px 12px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--r-xs);
   font-size: var(--text-xs);
   color: var(--ink-2);
   background: transparent;
@@ -668,8 +694,8 @@ onBeforeUnmount(() => {
 
 .hero-spread {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(238px, 282px);
-  gap: clamp(26px, 4vw, 58px);
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 296px);
+  gap: clamp(28px, 3.4vw, 52px);
   align-items: start;
 }
 
@@ -706,7 +732,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--line);
   color: var(--ink-2);
   text-decoration: none;
@@ -745,12 +771,7 @@ onBeforeUnmount(() => {
 }
 
 .campus-hint {
-  font-size: 9px;
-  color: var(--ink-4);
-  letter-spacing: 0.02em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .campus-arrow {
@@ -771,21 +792,18 @@ onBeforeUnmount(() => {
 }
 
 .hero-side .quick {
-  padding: 7px 0;
+  padding: 8px 0;
   border: 0;
-  border-bottom: 1px dashed var(--line);
   border-radius: 0;
   text-align: left;
   background: transparent;
   font-size: var(--text-xs);
   color: var(--ink-2);
-}
-
-.hero-side .quick:last-child {
-  border-bottom: 0;
+  transition: color var(--t-fast), padding-left var(--t-base) var(--ease-out);
 }
 
 .hero-side .quick:hover {
+  padding-left: 6px;
   color: var(--accent);
   background: transparent;
 }
@@ -860,10 +878,12 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
   background: var(--surface);
   color: var(--ink-2);
   font-size: var(--text-2xs);

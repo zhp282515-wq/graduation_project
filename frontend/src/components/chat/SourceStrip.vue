@@ -106,17 +106,17 @@ onBeforeUnmount(() => stripEl.value?.removeEventListener('wheel', onWheel))
   align-items: baseline;
   gap: 6px;
   max-width: 300px;
-  padding: 4px 9px;
+  padding: 4px 8px;
   border: 1px solid var(--line);
-  border-radius: var(--r-full);
-  background: var(--surface-2);
+  border-radius: var(--r-xs);
+  background: transparent;
   white-space: nowrap;
   transition: border-color var(--t-fast), background var(--t-fast);
 }
 
 .source-pill:hover {
   border-color: var(--accent-line);
-  background: var(--accent-soft);
+  background: var(--surface-2);
 }
 
 .pill-index {

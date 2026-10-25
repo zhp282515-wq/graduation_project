@@ -105,13 +105,13 @@ function close() {
         <div class="source-head">
           <h3 v-if="!titleIsUrl" class="source-title">{{ active.title }}</h3>
           <p v-else class="source-url-title">{{ webHost || active.url }}</p>
-          <div class="source-chips">
-            <span v-if="active.kind === 'web'" class="chip">网页引用</span>
-            <span v-if="active.kind === 'knowledge'" class="chip">{{ typeLabel(active.fileType) }}</span>
-            <span v-if="active.page" class="chip">第 {{ active.page }} 页</span>
-            <span v-if="active.chunkIndex !== null" class="chip">分片 #{{ active.chunkIndex }}</span>
-            <span v-if="active.text" class="chip">{{ formatNumber(active.text.length) }} 字</span>
-          </div>
+          <p class="source-meta mono">
+            <template v-if="active.kind === 'web'">网页引用</template>
+            <template v-else>{{ typeLabel(active.fileType) }}</template>
+            <span v-if="active.page"> · 第 {{ active.page }} 页</span>
+            <span v-if="active.chunkIndex !== null"> · 分片 #{{ active.chunkIndex }}</span>
+            <span v-if="active.text"> · {{ formatNumber(active.text.length) }} 字</span>
+          </p>
           <p v-if="active.sectionPath" class="section-path mono">{{ active.sectionPath }}</p>
         </div>
 
@@ -215,6 +215,13 @@ function close() {
   font-weight: 500;
   letter-spacing: 0.03em;
   line-height: 1.45;
+}
+
+.source-meta {
+  margin: 4px 0 14px;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-4);
 }
 
 .source-chips {
