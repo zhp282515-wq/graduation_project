@@ -28,7 +28,7 @@ const VERTEX = `
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     float dist = max(1.0, -mv.z);
-    float twinkle = 0.82 + 0.18 * sin(uTime * 0.9 + aPhase * 6.28318);
+    float twinkle = 0.88 + 0.12 * sin(uTime * 0.9 + aPhase * 6.28318);
     // 高亮只做两件事：轻微放大 + 柔和呼吸，不再画圆环。
     float shimmer = 0.5 + 0.5 * sin(uTime * 1.55 + aPhase * 6.28318);
     float emph = clamp(aEmphasis, 0.0, 2.0);
@@ -36,13 +36,13 @@ const VERTEX = `
     float selectBoost = emph >= 1.5 ? 1.30 + 0.24 * shimmer : 0.0;
     float boost = max(hoverBoost, selectBoost);
     float sizeBoost = 1.0 + (emph >= 1.5 ? 0.95 : 0.46 * emph);
-    gl_PointSize = aSize * uPixel * (175.0 / dist) * twinkle * sizeBoost;
-    gl_PointSize = clamp(gl_PointSize, 0.9, emph > 0.01 ? 10.5 : 7.4);
+    gl_PointSize = aSize * uPixel * (196.0 / dist) * twinkle * sizeBoost;
+    gl_PointSize = clamp(gl_PointSize, 1.1, emph > 0.01 ? 12.6 : 9.2);
     // 近亮远暗：让星群有纵深，而不是压成一片白。
     float depth = clamp(uFocus / dist, 0.46, 1.0);
     vColor = aColor;
     float dimOthers = mix(1.0, 0.8, uSel * (1.0 - clamp(emph, 0.0, 1.0)));
-    vAlpha = mix(0.04, 1.0, aVisible) * twinkle * depth * (1.0 + boost * 1.05) * dimOthers;
+    vAlpha = mix(0.05, 1.12, aVisible) * twinkle * depth * (1.0 + boost * 1.08) * dimOthers;
     vEmph = boost;
     vSel = smoothstep(1.2, 1.9, emph);
     gl_Position = projectionMatrix * mv;
@@ -68,8 +68,8 @@ const FRAGMENT = `
     // 被选中的那颗星持续轻微呼吸：幅度控制在 ~15%，不扩散成大光斑。
     float breathe = 0.5 + 0.5 * sin(uTime * 2.3);
     float selGain = vSel * (0.16 + 0.34 * breathe);
-    float alpha = (glow * 0.94 + halo * 0.72 + spike * 0.055) * vAlpha * (1.0 + selGain);
-    vec3 color = vColor * (0.58 + glow * 0.86) + vec3(spike * 0.12)
+    float alpha = (glow * 1.12 + halo * 0.9 + spike * 0.07) * vAlpha * (1.0 + selGain);
+    vec3 color = vColor * (0.72 + glow * 1.0) + vec3(glow * 0.08) + vec3(spike * 0.15)
       + vColor * vEmph * 0.74 * glow
       + vColor * vSel * (0.10 + 0.24 * breathe) * glow;
     gl_FragColor = vec4(color, alpha);
@@ -218,6 +218,7 @@ export function createStarField(container, options = {}) {
   let chainLines = null
   let semanticLines = null
   let nebulaGroup = null
+  let rings = null
   const nebulaBreathe = []
   let emphasisCurrent = null
   let emphasisGoal = null
@@ -380,6 +381,42 @@ export function createStarField(container, options = {}) {
       blending: THREE.AdditiveBlending,
     })
     return new THREE.Points(geometry, material)
+  }
+
+  function buildRings(radius) {
+    const group = new THREE.Group()
+    const ink = 0x8f887a
+    const radii = [radius * 0.74, radius * 0.9, radius * 1.0]
+    radii.forEach((value, index) => {
+      const material = new THREE.LineBasicMaterial({
+        color: ink,
+        transparent: true,
+        opacity: index === 1 ? 0.3 : 0.17,
+        depthWrite: false,
+      })
+      group.add(new THREE.Line(circleGeometry(value), material))
+    })
+
+    // 时间轴刻度：每 5 度一格短刻线，每 30 度一格长刻线。
+    const tickCount = 72
+    const ticks = []
+    const outer = radii[2]
+    for (let i = 0; i < tickCount; i += 1) {
+      const angle = (i / tickCount) * Math.PI * 2
+      const long = i % 6 === 0
+      const inner = outer * (long ? 0.962 : 0.984)
+      ticks.push(Math.cos(angle) * inner, 0, Math.sin(angle) * inner)
+      ticks.push(Math.cos(angle) * outer, 0, Math.sin(angle) * outer)
+    }
+    const tickGeometry = new THREE.BufferGeometry()
+    tickGeometry.setAttribute('position', new THREE.Float32BufferAttribute(ticks, 3))
+    group.add(
+      new THREE.LineSegments(
+        tickGeometry,
+        new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: 0.34, depthWrite: false }),
+      ),
+    )
+    return group
   }
 
   function buildNebulae(documents, points) {
@@ -568,6 +605,8 @@ export function createStarField(container, options = {}) {
     if (chainLines) clearGroup(chainLines)
     if (semanticLines) clearGroup(semanticLines)
     if (nebulaGroup) clearGroup(nebulaGroup)
+    if (rings) clearGroup(rings)
+    rings = null
     nebulaBreathe.length = 0
 
     const withHue = documents.map((doc) => ({ ...doc }))
@@ -609,6 +648,12 @@ export function createStarField(container, options = {}) {
       fitRadius = Math.max(24, p80 * 1.35)
       boundsRadius = Math.max(fitRadius, distances[distances.length - 1] || fitRadius)
     }
+
+    // 圆形时间轴：三条同心发丝环 + 72 格刻度，水平铺在星群下方，随星图缓慢自转。
+    rings = buildRings(fitRadius * 0.84)
+    rings.position.copy(center)
+    rings.position.y = center.y - fitRadius * 0.02
+    root.add(rings)
 
     if (!farField) {
       farField = buildFarField()
@@ -1037,6 +1082,7 @@ export function createStarField(container, options = {}) {
       item.sprite.scale.setScalar(item.base * (1 + wave * 0.045))
       item.sprite.material.opacity = 0.105 + wave * 0.022
     }
+    if (rings && !reducedMotion) rings.rotation.y = elapsed * 0.012
     if (farField) farField.rotation.y = elapsed * 0.004
     if (root) root.rotation.y = Math.sin(elapsed * 0.03) * 0.02
     controls.update(dt)
