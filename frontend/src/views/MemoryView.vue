@@ -219,7 +219,7 @@ onMounted(() => {
 }
 
 .head-count {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-3);
 }
@@ -299,13 +299,13 @@ onMounted(() => {
 }
 
 .mem-no {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.1em;
   color: var(--accent);
 }
 
 .mem-cat {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-3);
@@ -315,7 +315,7 @@ onMounted(() => {
 }
 
 .mem-time {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -357,7 +357,7 @@ onMounted(() => {
 }
 
 .count {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
   margin-right: auto;
 }
@@ -366,7 +366,7 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink-3);
   transition: color var(--t-fast);
@@ -386,7 +386,7 @@ onMounted(() => {
 }
 
 .mem-id {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
   letter-spacing: 0.06em;
 }
@@ -416,7 +416,7 @@ onMounted(() => {
 
 .state-tag {
   margin: 0;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.2em;
   color: var(--accent);
 }
@@ -440,7 +440,7 @@ onMounted(() => {
   margin: 34px 0 0;
   padding-top: 14px;
   border-top: 1px solid var(--line);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-4);
 }

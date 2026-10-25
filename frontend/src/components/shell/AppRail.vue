@@ -24,7 +24,7 @@ const historyCount = computed(() => conversation.sessions.length)
 <template>
   <nav class="rail" aria-label="主导航">
     <RouterLink to="/inquiry" class="seal" aria-label="星野台，返回问学">
-      <img class="seal-img" :src="sealUrl" alt="江西师范大学校徽" width="42" height="35" />
+      <img class="seal-img" :src="sealUrl" alt="江西师范大学校徽" width="52" height="43" />
       <span class="seal-caption serif" aria-hidden="true">星野台</span>
     </RouterLink>
 
@@ -96,7 +96,7 @@ const historyCount = computed(() => conversation.sessions.length)
 
 .seal-img {
   display: block;
-  width: 42px;
+  width: 52px;
   height: auto;
   opacity: 0.92;
   transition: opacity var(--t-base) var(--ease-out);
@@ -107,7 +107,7 @@ const historyCount = computed(() => conversation.sessions.length)
 }
 
 .seal-caption {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.3em;
   color: var(--ink-3);
   writing-mode: vertical-rl;
@@ -169,7 +169,7 @@ const historyCount = computed(() => conversation.sessions.length)
 }
 
 .rail-index {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   color: var(--ink-4);
 }
@@ -218,7 +218,7 @@ const historyCount = computed(() => conversation.sessions.length)
 }
 
 .tool-label {
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 0.18em;
 }
 
@@ -234,7 +234,7 @@ const historyCount = computed(() => conversation.sessions.length)
   border-radius: var(--r-full);
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
 }
 
@@ -243,6 +243,8 @@ const historyCount = computed(() => conversation.sessions.length)
   justify-content: center;
   gap: 3px;
   padding: 6px 0;
+  gap: 2px;
+  white-space: nowrap;
 }
 
 .rail-tool--hint:hover {
@@ -316,7 +318,7 @@ const historyCount = computed(() => conversation.sessions.length)
 
   .tool-label {
     display: inline;
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 0.08em;
   }
 

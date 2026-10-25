@@ -265,7 +265,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .result-count {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -288,7 +288,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .group-label {
   padding: 6px 10px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.2em;
   color: var(--ink-4);
 }
@@ -369,7 +369,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .row-meta {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-3);
   letter-spacing: 0.04em;
 }
@@ -398,7 +398,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   gap: 10px;
   padding: 12px 24px 16px;
   border-top: 1px solid var(--line);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-3);
   letter-spacing: 0.06em;
 }
@@ -411,7 +411,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   margin-left: auto;
   border: 1px solid var(--line);
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink-3);
   background: transparent;

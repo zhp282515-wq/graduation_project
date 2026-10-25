@@ -176,22 +176,38 @@ function openSources(list) {
   sheetOpen.value = true
 }
 
+// normalizeSources 输出的是 camelCase（fileMd5/chunkIndex/chunkId），这里同时兼容原始 snake_case。
 function locateSource(source) {
   sheetOpen.value = false
-  if (!source?.file_md5) return
+  const md5 = source?.fileMd5 || source?.file_md5 || ''
+  if (!md5) {
+    ui.notify('这条出处没有关联文档指纹，无法在星图中定位', 'warn')
+    return
+  }
+  const rawIndex = source.chunkIndex ?? source.chunk_index
+  const index = Number.isFinite(Number(rawIndex)) ? Number(rawIndex) : 0
+  const chunkId = source.chunkId || source.chunk_id || ''
   router.push({
     name: 'atlas',
-    query: { focus: `${source.file_md5}:${source.chunk_index ?? 0}` },
+    query: {
+      focus: `${md5}:${index}`,
+      ...(chunkId ? { chunk: String(chunkId) } : {}),
+    },
   })
 }
 
 function openArchive(source) {
   sheetOpen.value = false
-  if (!source?.file_md5) return
+  const md5 = source?.fileMd5 || source?.file_md5 || ''
+  if (!md5) {
+    ui.notify('这条出处没有关联文档指纹，无法打开所属文档', 'warn')
+    return
+  }
+  const rawIndex = source.chunkIndex ?? source.chunk_index
   router.push({
     name: 'archive',
-    params: { fileMd5: source.file_md5 },
-    query: Number.isFinite(Number(source.chunk_index)) ? { chunk: String(source.chunk_index) } : {},
+    params: { fileMd5: md5 },
+    query: Number.isFinite(Number(rawIndex)) ? { chunk: String(rawIndex) } : {},
   })
 }
 
@@ -261,12 +277,17 @@ onBeforeUnmount(() => {
 
     <div ref="scroller" class="thread-scroll" @scroll.passive="onScroll">
       <div v-if="isEmpty" class="hero">
-        <div class="hero-mark">
-          <img class="hero-seal" :src="sealUrl" alt="江西师范大学校徽" width="28" height="23" />
-          <span class="hero-name">江西师范大学</span>
-          <span class="hero-role mono">校园知识助手</span>
-          <span class="hair" />
-          <span class="mono">2026</span>
+        <div class="hero-head">
+          <div class="hero-mark">
+            <span class="hero-name">江西师范大学</span>
+            <span class="hero-role mono">校园知识助手 · CAMPUS ASSISTANT</span>
+            <span class="hair" />
+            <span class="mono">2026</span>
+          </div>
+          <figure class="hero-emblem">
+            <img class="hero-seal" :src="sealUrl" alt="江西师范大学校徽" width="64" height="53" />
+            <figcaption class="mono">1940 · NANCHANG</figcaption>
+          </figure>
         </div>
 
         <div class="hero-spread">
@@ -478,7 +499,7 @@ onBeforeUnmount(() => {
 }
 
 .badge {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 
@@ -512,39 +533,66 @@ onBeforeUnmount(() => {
   animation: fade-up 620ms var(--ease-out) both;
 }
 
-.hero-mark {
+.hero-head {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--ink-3);
-  font-size: var(--text-2xs);
-  letter-spacing: 0.14em;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
 }
 
-.hero-seal {
-  flex: 0 0 auto;
-  width: 28px;
-  height: auto;
-  opacity: 0.9;
+.hero-mark {
+  display: flex;
+  align-items: baseline;
+  flex: 1;
+  min-width: 0;
+  gap: 14px;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.12em;
 }
 
 .hero-name {
+  flex: 0 0 auto;
   font-family: var(--font-serif);
-  font-size: 12.5px;
-  letter-spacing: 0.08em;
-  color: var(--ink-2);
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  color: var(--ink);
 }
 
 .hero-role {
-  font-size: var(--text-2xs);
-  letter-spacing: 0.12em;
-  color: var(--ink-4);
+  flex: 0 0 auto;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
 }
 
 .hero-mark .hair {
   flex: 1;
   height: 1px;
+  margin-bottom: 3px;
   background: var(--line);
+}
+
+.hero-emblem {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+}
+
+.hero-seal {
+  width: 64px;
+  height: auto;
+  opacity: 0.96;
+}
+
+.hero-emblem figcaption {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--ink-4);
+  white-space: nowrap;
 }
 
 .hero-title {
@@ -587,7 +635,7 @@ onBeforeUnmount(() => {
   gap: 14px;
   margin: 22px 0 0;
   color: var(--ink-3);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.14em;
 }
 
@@ -604,7 +652,7 @@ onBeforeUnmount(() => {
 
 .block-label {
   margin: 0 0 10px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.16em;
   color: var(--ink-3);
 }
@@ -633,7 +681,7 @@ onBeforeUnmount(() => {
 }
 
 .suggest-type {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.18em;
   color: var(--accent);
 }
@@ -749,7 +797,7 @@ onBeforeUnmount(() => {
 }
 
 .campus-index {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.1em;
   color: var(--ink-4);
 }
@@ -860,7 +908,7 @@ onBeforeUnmount(() => {
 }
 
 .history-error .mono {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.14em;
   color: var(--accent);
 }
@@ -886,7 +934,7 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-soft);
   background: var(--surface);
   color: var(--ink-2);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.08em;
   box-shadow: var(--shadow-float);
   z-index: 5;
@@ -912,7 +960,7 @@ onBeforeUnmount(() => {
 .dock-note {
   margin: 9px 0 0;
   text-align: center;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink-4);
 }
@@ -984,6 +1032,28 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
+  .hero-head {
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .hero-name {
+    font-size: 14px;
+    letter-spacing: 0.08em;
+  }
+
+  .hero-role {
+    display: none;
+  }
+
+  .hero-seal {
+    width: 48px;
+  }
+
+  .hero-emblem figcaption {
+    display: none;
+  }
+
   .campus-grid {
     grid-template-columns: minmax(0, 1fr);
   }

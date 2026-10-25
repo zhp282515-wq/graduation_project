@@ -72,7 +72,7 @@ onBeforeUnmount(() => stripEl.value?.removeEventListener('wheel', onWheel))
 
 .strip-label {
   flex: none;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.2em;
   color: var(--ink-4);
 }
@@ -120,7 +120,7 @@ onBeforeUnmount(() => stripEl.value?.removeEventListener('wheel', onWheel))
 }
 
 .pill-index {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--accent);
 }
 
@@ -133,19 +133,19 @@ onBeforeUnmount(() => stripEl.value?.removeEventListener('wheel', onWheel))
 }
 
 .pill-meta {
-  font-size: 9.5px;
+  font-size: 11px;
   color: var(--ink-4);
   letter-spacing: 0.04em;
 }
 
 .pill-count {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--accent);
   letter-spacing: 0.02em;
 }
 
 .pill-more {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
   padding-left: 2px;
 }
@@ -156,7 +156,7 @@ onBeforeUnmount(() => stripEl.value?.removeEventListener('wheel', onWheel))
   align-items: center;
   gap: 4px;
   margin-left: auto;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-3);
   letter-spacing: 0.06em;
 }

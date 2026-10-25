@@ -185,7 +185,7 @@ function close() {
 }
 
 .nav-index {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--accent);
   padding-top: 2px;
 }
@@ -205,7 +205,7 @@ function close() {
 }
 
 .nav-meta {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -219,7 +219,7 @@ function close() {
 
 .source-meta {
   margin: 4px 0 14px;
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 0.05em;
   color: var(--ink-4);
 }
@@ -233,7 +233,7 @@ function close() {
 
 .section-path {
   margin-top: 10px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-3);
   letter-spacing: 0.03em;
 }
@@ -269,13 +269,13 @@ function close() {
 .web-hint {
   display: block;
   margin-top: 4px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
   letter-spacing: 0.04em;
 }
 
 .web-url {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   word-break: break-all;
 }
 

@@ -208,6 +208,49 @@ function pushFilters() {
   engine.setFilter(atlas.filteredIds)
 }
 
+const locateError = ref('')
+const locateMd5 = ref('')
+
+// 面板会遮住画面：把星体让到「真正看得见的那块区域」的正中，而不是画布正中。
+const PANEL_GAP = 24
+const LEFT_PANEL_W = 296
+const DETAIL_W = 392
+
+function focusOffset() {
+  if (typeof window === 'undefined') return { x: 0, y: 0 }
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  if (vw < 900) {
+    // 手机上详情是底部抽屉（约 62vh），把星体抬到上半部的正中。
+    return { x: 0, y: -Math.round(vh * 0.2) }
+  }
+  const railW = 78
+  const leftEdge = railW + (panelsOpen.value ? LEFT_PANEL_W + PANEL_GAP : 0)
+  const rightEdge = vw - (atlas.selectedId ? DETAIL_W + PANEL_GAP : 0)
+  const freeCenter = (leftEdge + rightEdge) / 2
+  return { x: Math.round(freeCenter - (railW + (vw - railW) / 2)), y: 0 }
+}
+
+function selectedOffset() {
+  return atlas.selectedId ? focusOffset() : undefined
+}
+
+// 「最大查看尺度」：以该分片所属文档的真实分片分布为准，保证选中星与其同文档星群
+// 都在画面里（后端给的 radius 是分位数，不能直接当包围盒用）。
+function focusDistanceFor(point) {
+  if (!point) return undefined
+  const center = atlas.docById.get(point.file_md5)?.center || [point.x, point.y, point.z]
+  let extent = 0
+  for (const item of atlas.points) {
+    if (item.file_md5 !== point.file_md5) continue
+    const dx = item.x - center[0]
+    const dy = item.y - center[1]
+    const dz = item.z - center[2]
+    extent = Math.max(extent, Math.sqrt(dx * dx + dy * dy + dz * dz))
+  }
+  return Math.min(110, Math.max(26, extent * 2.25 + 8))
+}
+
 function selectPoint(point, { focus = true } = {}) {
   if (!point) {
     atlas.clearSelection()
@@ -362,12 +405,22 @@ async function mountData() {
   pushFilters()
 
   const focus = route.query.focus ? String(route.query.focus) : ''
+  const chunk = route.query.chunk ? String(route.query.chunk) : ''
   const doc = route.query.doc ? String(route.query.doc) : ''
-  if (focus && atlas.selectByStarKey(focus)) {
-    const point = atlas.selected
+  if (focus) {
+    // 先用「文档:分片序号」精确命中；失败再按 Milvus 分片 id 兜底（同一分片的两种身份）。
+    const point = atlas.byStarKey.get(focus) || (chunk ? atlas.byId.get(chunk) : null)
     if (point) {
       cameraBeforeDetail = engine.saveCameraState() || null
-      engine.setSelected(point.id)
+      atlas.select(point.id)
+      engine.setSelected(point.id, {
+        screenOffset: focusOffset(),
+        distance: focusDistanceFor(point),
+      })
+    } else {
+      locateMd5.value = focus.includes(':') ? focus.split(':')[0] : ''
+      locateError.value = '星图中没有找到这条出处对应的分片，可能已被重新入库。'
+      ui.notify(locateError.value, 'warn')
     }
   } else if (doc) {
     atlas.setDocFilter(doc)
@@ -441,7 +494,11 @@ watch(
 watch(
   () => atlas.selectedId,
   (id) => {
-    engine?.setSelected(id || '')
+    // 唯一的选中入口：带上面板偏移，星体才会落在“剩余可视区”的正中。
+    engine?.setSelected(id || '', {
+      screenOffset: selectedOffset(),
+      distance: focusDistanceFor(atlas.selected),
+    })
     engine?.setAutoPaused('detail', Boolean(id))
     if (!id) engine?.setHovered('')
   },
@@ -731,7 +788,7 @@ onBeforeUnmount(() => {
         :style="{
           left: `${label.x}px`,
           top: `${label.y}px`,
-          opacity: 0.5 + Math.sqrt(label.weight ?? 0.5) * 0.5,
+          opacity: 0.72 + Math.sqrt(label.weight ?? 0.5) * 0.28,
           fontSize: `${10 + (label.weight ?? 0.5) * 2.6}px`,
         }"
         :title="`${label.title} · ${label.count} 个分片`"
@@ -853,6 +910,17 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>读取星图元数据 · 分片将逐页点亮</template>
         </p>
+      </div>
+    </div>
+
+    <div v-if="locateError" class="locate-card" role="status">
+      <p class="locate-title mono">LOCATE FAILED</p>
+      <p class="locate-text">{{ locateError }}</p>
+      <div class="locate-actions">
+        <RouterLink v-if="locateMd5" class="btn btn--sm" :to="{ name: 'archive', params: { fileMd5: locateMd5 } }">
+          在典藏打开该文档
+        </RouterLink>
+        <button type="button" class="btn btn--sm btn--quiet" @click="locateError = ''">关闭</button>
       </div>
     </div>
 
@@ -1068,7 +1136,7 @@ onBeforeUnmount(() => {
 }
 
 .head-count {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-3);
 }
@@ -1121,7 +1189,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-3);
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.85);
@@ -1205,7 +1273,7 @@ onBeforeUnmount(() => {
   padding: 1px 4px;
   border: 1px solid var(--line-strong);
   border-radius: 3px;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -1217,14 +1285,14 @@ onBeforeUnmount(() => {
 }
 
 .match-count {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink-3);
 }
 
 .result-pos {
   margin-left: auto;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -1291,7 +1359,7 @@ onBeforeUnmount(() => {
 }
 
 .result-snippet {
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--ink-3);
   overflow: hidden;
@@ -1301,19 +1369,19 @@ onBeforeUnmount(() => {
 }
 
 .result-no {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
 .empty-hint {
   margin: 10px 0 2px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
 .panel-label {
   margin: 0 0 8px;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.16em;
   color: var(--ink-4);
 }
@@ -1339,7 +1407,7 @@ onBeforeUnmount(() => {
   border: 0;
   border-bottom: 1px solid transparent;
   border-radius: 0;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-3);
   background: transparent;
 }
@@ -1363,7 +1431,7 @@ onBeforeUnmount(() => {
 
 .doc-more {
   margin: 8px 0 12px;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-4);
   text-align: left;
@@ -1375,7 +1443,7 @@ onBeforeUnmount(() => {
 
 .chip-count {
   margin-left: auto;
-  font-size: 9px;
+  font-size: 11px;
   opacity: 0.7;
 }
 
@@ -1391,7 +1459,7 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 4px;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink-3);
 }
@@ -1412,7 +1480,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 6px 4px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-4);
   text-align: left;
 }
@@ -1441,7 +1509,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--accent);
   letter-spacing: 0.04em;
 }
@@ -1455,7 +1523,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   color: var(--ink-3);
 }
@@ -1470,7 +1538,7 @@ onBeforeUnmount(() => {
 
 .algo-body {
   margin-top: 10px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.8;
   color: var(--ink-3);
 }
@@ -1524,7 +1592,39 @@ onBeforeUnmount(() => {
 .doc-label-count {
   font-size: 0.78em;
   letter-spacing: 0.1em;
-  opacity: 0.62;
+  opacity: 0.8;
+}
+
+.locate-card {
+  position: absolute;
+  left: 50%;
+  bottom: 108px;
+  z-index: 7;
+  width: min(420px, calc(100% - 40px));
+  transform: translateX(-50%);
+  padding: 14px 16px 12px;
+  border: 1px solid rgba(226, 104, 76, 0.45);
+  border-radius: var(--r-sm);
+  background: rgba(10, 11, 16, 0.95);
+}
+
+.locate-title {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+}
+
+.locate-text {
+  margin: 6px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: rgba(240, 235, 224, 0.82);
+}
+
+.locate-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .hover-card {
@@ -1556,13 +1656,13 @@ onBeforeUnmount(() => {
 
 .hover-no {
   margin-left: 6px;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 
 .hover-snippet {
   margin: 4px 0 0;
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.55;
   color: var(--ink-2);
   display: -webkit-box;
@@ -1573,7 +1673,7 @@ onBeforeUnmount(() => {
 
 .hover-meta {
   margin: 6px 0 0;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink-3);
 }
@@ -1619,7 +1719,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-3);
 }
@@ -1764,7 +1864,7 @@ onBeforeUnmount(() => {
 }
 
 .star-meta dt {
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.14em;
   color: var(--ink-4);
 }
@@ -1781,7 +1881,7 @@ onBeforeUnmount(() => {
 .star-section {
   margin: 0;
   padding: 10px 16px 0;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--ink-4);
 }
@@ -1817,7 +1917,7 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin: 0;
   padding: 8px 16px 12px;
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--ink-3);
 }
@@ -1847,7 +1947,7 @@ onBeforeUnmount(() => {
 
 .loader-tag {
   margin: 0;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.24em;
   color: var(--accent);
 }
@@ -1890,7 +1990,7 @@ onBeforeUnmount(() => {
 
 .loader-note {
   margin: 10px 0 0;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.8;
   letter-spacing: 0.04em;
   color: var(--ink-4);
@@ -1925,13 +2025,13 @@ onBeforeUnmount(() => {
 
 @media (max-width: 640px) {
   .doc-label {
-    font-size: 10px;
+    font-size: 11px;
     letter-spacing: 0.01em;
     padding: 1px 2px;
   }
 
   .doc-label .label-count {
-    font-size: 9px;
+    font-size: 11px;
   }
 }
 

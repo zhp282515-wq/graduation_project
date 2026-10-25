@@ -210,9 +210,11 @@
   border-bottom-color: var(--line-strong);
   border-radius: 4px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--ink-3);
   background: var(--surface-2);
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .chip {
@@ -223,7 +225,7 @@
   padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: var(--r-full);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--ink-3);
   white-space: nowrap;
@@ -293,7 +295,7 @@
 
 .minor-head .count {
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-3);
 }
 
@@ -306,7 +308,7 @@
 
 .field > span {
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-3);

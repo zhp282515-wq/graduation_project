@@ -19,6 +19,7 @@ const fileInput = ref(null)
 const dragging = ref(false)
 const expanded = reactive(new Set())
 const chunkNodes = new Map()
+const targetChunk = ref(null)
 
 let searchTimer = null
 
@@ -110,6 +111,7 @@ async function openByMd5(md5, chunkIndex) {
   if (chunkIndex !== null && chunkIndex !== undefined && chunkIndex !== '') {
     const target = Number(chunkIndex)
     if (Number.isFinite(target)) {
+      targetChunk.value = target
       const targetPage = Math.floor(target / library.chunkPageSize) + 1
       if (targetPage !== library.chunkPage) await library.loadChunks(targetPage)
       await nextTick()
@@ -488,7 +490,7 @@ onBeforeUnmount(() => {
               :key="chunk.chunk_id || chunk.chunk_index"
               :ref="(node) => registerChunk(chunk.chunk_index, node)"
               class="chunk"
-              :class="{ 'is-open': expanded.has(chunk.chunk_index) }"
+              :class="{ 'is-open': expanded.has(chunk.chunk_index), 'is-target': targetChunk === chunk.chunk_index }"
             >
               <button type="button" class="chunk-top" @click="toggleChunk(chunk.chunk_index)">
                 <span class="chunk-no mono">#{{ String(chunk.chunk_index).padStart(4, '0') }}</span>
@@ -561,7 +563,7 @@ onBeforeUnmount(() => {
 }
 
 .head-count {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-3);
 }
@@ -598,14 +600,9 @@ onBeforeUnmount(() => {
 
 .facet-row {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   margin-top: 10px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: none;
-  /* 溢出时右缘淡出，避免半个筛选项贴在边上显得像裁切错误 */
-  mask-image: linear-gradient(90deg, #000 93%, transparent);
 }
 
 .facet-row::-webkit-scrollbar {
@@ -621,7 +618,7 @@ onBeforeUnmount(() => {
   padding: 0 7px;
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 9.5px;
+  font-size: 11px;
   letter-spacing: 0.03em;
   color: var(--ink-3);
   transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
@@ -662,7 +659,7 @@ onBeforeUnmount(() => {
   background-position: calc(100% - 12px) 11px, calc(100% - 8px) 11px;
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   cursor: pointer;
   appearance: none;
@@ -690,7 +687,7 @@ onBeforeUnmount(() => {
 }
 
 .result-count {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -730,7 +727,7 @@ onBeforeUnmount(() => {
 }
 
 .doc-type {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-3);
   padding: 3px 0;
@@ -763,7 +760,7 @@ onBeforeUnmount(() => {
 }
 
 .doc-meta {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.03em;
   color: var(--ink-4);
   white-space: nowrap;
@@ -804,7 +801,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   color: var(--ink-3);
 }
@@ -830,7 +827,7 @@ onBeforeUnmount(() => {
 }
 
 .upload-state {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-3);
   letter-spacing: 0.04em;
 }
@@ -855,7 +852,7 @@ onBeforeUnmount(() => {
 
 .upload-error {
   margin: 6px 0 0;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--err);
 }
 
@@ -886,7 +883,7 @@ onBeforeUnmount(() => {
 
 .state-tag {
   margin: 0;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.2em;
   color: var(--accent);
 }
@@ -907,7 +904,7 @@ onBeforeUnmount(() => {
   border: 1px dashed var(--accent);
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   color: var(--accent);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.18em;
   border-radius: var(--r-sm);
 }
@@ -922,12 +919,12 @@ onBeforeUnmount(() => {
 }
 
 .page-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 
 .foot-note {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -988,7 +985,7 @@ onBeforeUnmount(() => {
 }
 
 .meta-cell dt {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.16em;
   color: var(--ink-4);
 }
@@ -1016,7 +1013,7 @@ onBeforeUnmount(() => {
 }
 
 .fingerprint code {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-2);
   word-break: break-all;
 }
@@ -1034,7 +1031,7 @@ onBeforeUnmount(() => {
 
 .chunk-label {
   margin: 0;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.18em;
   color: var(--ink-3);
 }
@@ -1043,7 +1040,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 
@@ -1069,7 +1066,7 @@ onBeforeUnmount(() => {
 
 .chunk-no {
   flex: 0 0 52px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-4);
   letter-spacing: 0.04em;
 }
@@ -1095,7 +1092,7 @@ onBeforeUnmount(() => {
 .chunk-tags {
   display: inline-flex;
   gap: 10px;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -1106,6 +1103,11 @@ onBeforeUnmount(() => {
 
 .chunk.is-open .chunk-chev {
   transform: rotate(180deg);
+}
+
+.chunk.is-target {
+  background: rgba(226, 104, 76, 0.07);
+  box-shadow: inset 2px 0 var(--accent);
 }
 
 .chunk-preview {
@@ -1187,7 +1189,7 @@ onBeforeUnmount(() => {
 
 .empty-note {
   margin: 4px 0 0;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.1em;
   color: var(--ink-4);
 }
@@ -1208,10 +1210,8 @@ onBeforeUnmount(() => {
   }
 
   .facet-row {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 2px;
-    scrollbar-width: none;
+    flex-wrap: wrap;
+    gap: 6px 8px;
   }
 
   .facet-row::-webkit-scrollbar {

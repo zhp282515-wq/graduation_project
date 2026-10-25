@@ -96,13 +96,13 @@ const totalElapsed = computed(() =>
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.18em;
   color: var(--ink-3);
 }
 
 .trace-meta {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
 }
 
@@ -210,14 +210,14 @@ const totalElapsed = computed(() =>
 
 .step-status,
 .step-elapsed {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
   letter-spacing: 0.08em;
 }
 
 .step-args {
   margin-top: 2px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -226,7 +226,7 @@ const totalElapsed = computed(() =>
 
 .step-sources {
   margin-top: 2px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--accent);
 }
 </style>

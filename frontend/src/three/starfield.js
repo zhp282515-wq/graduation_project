@@ -19,9 +19,11 @@ const VERTEX = `
   uniform float uTime;
   uniform float uPixel;
   uniform float uFocus;
+  uniform float uSel;
   varying vec3 vColor;
   varying float vAlpha;
   varying float vEmph;
+  varying float vSel;
 
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -31,24 +33,28 @@ const VERTEX = `
     float shimmer = 0.5 + 0.5 * sin(uTime * 1.55 + aPhase * 6.28318);
     float emph = clamp(aEmphasis, 0.0, 2.0);
     float hoverBoost = emph > 0.01 && emph < 1.5 ? (0.78 + 0.34 * shimmer) * emph : 0.0;
-    float selectBoost = emph >= 1.5 ? 1.15 + 0.16 * shimmer : 0.0;
+    float selectBoost = emph >= 1.5 ? 1.30 + 0.24 * shimmer : 0.0;
     float boost = max(hoverBoost, selectBoost);
-    float sizeBoost = 1.0 + (emph >= 1.5 ? 0.62 : 0.46 * emph);
+    float sizeBoost = 1.0 + (emph >= 1.5 ? 0.95 : 0.46 * emph);
     gl_PointSize = aSize * uPixel * (175.0 / dist) * twinkle * sizeBoost;
     gl_PointSize = clamp(gl_PointSize, 0.9, emph > 0.01 ? 10.5 : 7.4);
     // 近亮远暗：让星群有纵深，而不是压成一片白。
     float depth = clamp(uFocus / dist, 0.46, 1.0);
     vColor = aColor;
-    vAlpha = mix(0.04, 1.0, aVisible) * twinkle * depth * (1.0 + boost * 1.05);
+    float dimOthers = mix(1.0, 0.8, uSel * (1.0 - clamp(emph, 0.0, 1.0)));
+    vAlpha = mix(0.04, 1.0, aVisible) * twinkle * depth * (1.0 + boost * 1.05) * dimOthers;
     vEmph = boost;
+    vSel = smoothstep(1.2, 1.9, emph);
     gl_Position = projectionMatrix * mv;
   }
 `
 
 const FRAGMENT = `
+  uniform float uTime;
   varying vec3 vColor;
   varying float vAlpha;
   varying float vEmph;
+  varying float vSel;
 
   void main() {
     vec2 uv = gl_PointCoord - 0.5;
@@ -59,8 +65,13 @@ const FRAGMENT = `
     float spike = max(0.0, 1.0 - abs(uv.x) * 18.0) * max(0.0, 1.0 - abs(uv.y) * 2.6);
     // 光晕收紧：半径更小、权重更低，避免盖住旁边的星。
     float halo = pow(core, 1.25) * (0.042 + vEmph * 0.026);
-    float alpha = (glow * 0.94 + halo * 0.72 + spike * 0.055) * vAlpha;
-    vec3 color = vColor * (0.58 + glow * 0.86) + vec3(spike * 0.12) + vColor * vEmph * 0.74 * glow;
+    // 被选中的那颗星持续轻微呼吸：幅度控制在 ~15%，不扩散成大光斑。
+    float breathe = 0.5 + 0.5 * sin(uTime * 2.3);
+    float selGain = vSel * (0.16 + 0.34 * breathe);
+    float alpha = (glow * 0.94 + halo * 0.72 + spike * 0.055) * vAlpha * (1.0 + selGain);
+    vec3 color = vColor * (0.58 + glow * 0.86) + vec3(spike * 0.12)
+      + vColor * vEmph * 0.74 * glow
+      + vColor * vSel * (0.10 + 0.24 * breathe) * glow;
     gl_FragColor = vec4(color, alpha);
   }
 `
@@ -180,9 +191,23 @@ export function createStarField(container, options = {}) {
   scene.add(root)
 
   const glowTexture = makeGlowTexture()
+  // 选中星体的小光晕：只服务「这颗星在哪」的识别，半径约 30px，随呼吸轻微起伏。
+  const selectionGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: 0xfff2dc,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  )
+  selectionGlow.visible = false
+  scene.add(selectionGlow)
   const ringTexture = makeRingTexture()
 
   const starUniforms = {
+    uSel: { value: 0 },
     uTime: { value: 0 },
     uPixel: { value: renderer.getPixelRatio() },
     uFocus: { value: 280 },
@@ -672,19 +697,23 @@ export function createStarField(container, options = {}) {
     if (selectSlot !== undefined) emphasisGoal[selectSlot] = 2
   }
 
-  function setSelected(id, { fly = true } = {}) {
+  function setSelected(id, { fly = true, screenOffset, distance } = {}) {
     selectedId = id || ''
     selectedPoint = pointIndex.get(selectedId) || null
     applyVisibility()
     primeEmphasis()
     const point = selectedPoint
     if (point) {
+      starUniforms.uSel.value = 1
+      selectionGlow.position.set(point.x, point.y, point.z)
+      selectionGlow.visible = true
       setAutoPaused('selection', true)
       if (!fly) return
-      // 选中时只做「平移到这颗星 + 轻微推近」，不把相机塞进星群内部——
-      // 视野里保留整片星群，用户才知道自己站在哪儿。
-      focusPoint(point, { distance: desiredDistanceFor(point) })
+      // 选中：平滑移到视觉中心，并推到允许的最大查看尺度；连续切换时从当前飞行状态接管。
+      focusPoint(point, { screenOffset, distance })
     } else {
+      starUniforms.uSel.value = 0
+      selectionGlow.visible = false
       setAutoPaused('selection', false)
     }
   }
@@ -772,14 +801,30 @@ export function createStarField(container, options = {}) {
     startFlight(targetPosition, targetLookAt)
   }
 
-  function focusPoint(point, { distance } = {}) {
+  function focusDistanceFor(point) {
+    // 「最大查看尺度」：近到能看清这颗星与它周围的同文档星群，又不会穿进星团内部。
+    const radius = docRadius.get(point.file_md5) || 8
+    return Math.min(56, Math.max(20, radius * 3.4))
+  }
+
+  function focusPoint(point, { distance, screenOffset } = {}) {
     if (!point) return
     const target = new THREE.Vector3(point.x, point.y, point.z)
     const direction = camera.position.clone().sub(target)
     if (direction.lengthSq() < 1) direction.set(0.4, 0.5, 1)
     direction.normalize()
-    const endDistance = Number.isFinite(distance) ? distance : desiredDistanceFor(point)
-    startFlight(target.clone().add(direction.multiplyScalar(endDistance)), target)
+    const endDistance = Number.isFinite(distance) ? distance : focusDistanceFor(point)
+    // 面板会遮住右侧/底部：把目标点在屏幕上让出这块区域，让星体真正落在“可看的中心”。
+    const shifted = target.clone()
+    if (screenOffset && (screenOffset.x || screenOffset.y)) {
+      const worldPerPixel = (2 * Math.tan((camera.fov * Math.PI) / 360) * endDistance)
+        / Math.max(1, renderer.domElement.clientHeight)
+      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize()
+      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize()
+      shifted.addScaledVector(right, -(screenOffset.x || 0) * worldPerPixel)
+      shifted.addScaledVector(up, (screenOffset.y || 0) * worldPerPixel)
+    }
+    startFlight(shifted.clone().add(direction.multiplyScalar(endDistance)), shifted)
   }
 
   function focusDocument(doc) {
@@ -952,6 +997,13 @@ export function createStarField(container, options = {}) {
     // 时间只在渲染时累加：切走标签页再回来，星体闪烁与刻度环都从原处继续，不会突跳。
     elapsed += dt
     starUniforms.uTime.value = elapsed
+    if (selectionGlow.visible && selectedPoint) {
+      const dist = camera.position.distanceTo(selectionGlow.position)
+      const worldPerPixel = (2 * Math.tan((camera.fov * Math.PI) / 360) * dist) / Math.max(1, renderer.domElement.clientHeight)
+      const px = 38 + 4 * Math.sin(elapsed * 2.3)
+      selectionGlow.scale.set(px * worldPerPixel, px * worldPerPixel, 1)
+      selectionGlow.material.opacity = 0.14 + 0.10 * (0.5 + 0.5 * Math.sin(elapsed * 2.3))
+    }
 
     const target = autoTarget()
     autoSpeed += (target - autoSpeed) * Math.min(1, dt * 2.6)
@@ -1080,6 +1132,7 @@ export function createStarField(container, options = {}) {
         })
       }
     })
+    selectionGlow.material.dispose()
     glowTexture.dispose()
     ringTexture.dispose()
     renderer.dispose()

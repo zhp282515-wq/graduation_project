@@ -394,7 +394,7 @@ defineExpose({
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink);
   background: color-mix(in srgb, var(--surface) 55%, transparent);
 }

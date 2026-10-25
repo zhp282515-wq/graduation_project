@@ -103,20 +103,20 @@ const elapsedMs = computed(() => (props.isCurrent ? props.run.elapsedMs : 0))
 }
 
 .gutter-no {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.16em;
   color: var(--ink-3);
 }
 
 .gutter-time {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
   letter-spacing: 0.04em;
 }
 
 .gutter-live {
   margin-top: 3px;
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.16em;
   color: var(--accent);
 }
@@ -197,7 +197,7 @@ const elapsedMs = computed(() => (props.isCurrent ? props.run.elapsedMs : 0))
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.14em;
   color: var(--ink-3);
 }

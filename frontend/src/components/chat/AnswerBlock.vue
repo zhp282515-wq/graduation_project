@@ -170,7 +170,7 @@ async function onBodyClick(event) {
   align-items: center;
   gap: 6px;
   color: var(--ink-3);
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.06em;
   padding: 2px 0;
 }
@@ -257,7 +257,7 @@ async function onBodyClick(event) {
 }
 
 .error-mark {
-  font-size: var(--text-2xs);
+  font-size: 11px;
   letter-spacing: 0.2em;
   color: var(--err);
 }
@@ -302,7 +302,7 @@ async function onBodyClick(event) {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: var(--text-2xs);
+  font-size: 11px;
   color: var(--ink-4);
   letter-spacing: 0.05em;
 }
