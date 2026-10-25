@@ -385,13 +385,13 @@ export function createStarField(container, options = {}) {
 
   function buildRings(radius) {
     const group = new THREE.Group()
-    const ink = 0x8f887a
+    const ink = 0xa39c8d
     const radii = [radius * 0.74, radius * 0.9, radius * 1.0]
     radii.forEach((value, index) => {
       const material = new THREE.LineBasicMaterial({
         color: ink,
         transparent: true,
-        opacity: index === 1 ? 0.3 : 0.17,
+        opacity: index === 1 ? 0.24 : 0.13,
         depthWrite: false,
       })
       group.add(new THREE.Line(circleGeometry(value), material))
@@ -413,7 +413,7 @@ export function createStarField(container, options = {}) {
     group.add(
       new THREE.LineSegments(
         tickGeometry,
-        new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: 0.34, depthWrite: false }),
+        new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: 0.26, depthWrite: false }),
       ),
     )
     return group
@@ -650,9 +650,9 @@ export function createStarField(container, options = {}) {
     }
 
     // 圆形时间轴：三条同心发丝环 + 72 格刻度，水平铺在星群下方，随星图缓慢自转。
-    rings = buildRings(fitRadius * 0.84)
+    rings = buildRings(fitRadius * 1.0)
     rings.position.copy(center)
-    rings.position.y = center.y - fitRadius * 0.02
+    rings.position.y = center.y - fitRadius * 0.04
     root.add(rings)
 
     if (!farField) {
