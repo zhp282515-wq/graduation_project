@@ -9,6 +9,7 @@
   line-height: 1.78;
   color: var(--ink);
   overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .md > *:first-child {
@@ -118,13 +119,87 @@
   background: var(--code-bg);
   overflow-x: auto;
   line-height: 1.62;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  tab-size: 4;
 }
 
 .md pre code {
+  display: block;
   padding: 0;
   background: none;
   font-size: 12.6px;
   color: var(--code-ink);
+}
+
+.md .code-block {
+  min-width: 0;
+  max-width: 100%;
+  margin: 1em 0 1.15em;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.md .code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.md .code-lang {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.md .code-copy {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.md .code-copy:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.md .code-copy[data-copy-state="success"] {
+  color: var(--ok);
+}
+
+.md .code-copy[data-copy-state="error"] {
+  color: var(--err);
+}
+
+.md .code-body {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.md .table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .md table {

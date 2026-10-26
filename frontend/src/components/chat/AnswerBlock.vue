@@ -1,6 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { renderMarkdown } from '../../utils/markdown'
+import { copyText } from '../../utils/clipboard'
 import { formatDuration, formatNumber, plainText } from '../../utils/format'
 import { sourceKindLabel } from '../../utils/citations'
 import RunTrace from './RunTrace.vue'
@@ -23,6 +24,19 @@ const emit = defineEmits(['regenerate', 'open-source', 'open-sources', 'refill']
 
 const reasoningOpen = ref(false)
 const copied = ref(false)
+const copyTimers = new Map()
+
+onBeforeUnmount(() => {
+  copyTimers.forEach((timer) => window.clearTimeout(timer))
+})
+
+function resetCopyState(key, reset, delay = 1600) {
+  window.clearTimeout(copyTimers.get(key))
+  copyTimers.set(key, window.setTimeout(() => {
+    reset()
+    copyTimers.delete(key)
+  }, delay))
+}
 
 const hasText = computed(() => Boolean(props.answer.text && props.answer.text.trim()))
 const html = computed(() => renderMarkdown(props.answer.text))
@@ -39,9 +53,9 @@ async function copyAnswer() {
   const text = plainText(props.answer.text)
   if (!text) return
   try {
-    await navigator.clipboard.writeText(text)
+    await copyText(text)
     copied.value = true
-    window.setTimeout(() => (copied.value = false), 1600)
+    resetCopyState('answer', () => (copied.value = false))
   } catch {
     copied.value = false
   }
@@ -49,18 +63,23 @@ async function copyAnswer() {
 
 async function onBodyClick(event) {
   const button = event.target.closest?.('[data-copy-code]')
-  if (!button) return
+  if (!button || !event.currentTarget.contains(button)) return
   const block = button.closest('.code-block')
-  const code = block?.querySelector('code')?.textContent || ''
-  try {
-    await navigator.clipboard.writeText(code)
-    button.textContent = '已复制'
-    window.setTimeout(() => {
-      button.textContent = '复制'
-    }, 1500)
-  } catch {
-    /* 剪贴板不可用时保持原样 */
+  const code = block?.querySelector('code')
+  if (!code) return
+  const label = button.querySelector('.code-copy-label')
+  const setState = (state, text) => {
+    button.dataset.copyState = state
+    button.setAttribute('aria-label', text)
+    label.textContent = text
   }
+  try {
+    await copyText(code.textContent)
+    setState('success', '已复制')
+  } catch {
+    setState('error', '复制失败，请手动复制')
+  }
+  resetCopyState(button, () => setState('', '复制代码'), 2000)
 }
 </script>
 
@@ -88,7 +107,7 @@ async function onBodyClick(event) {
 
     <div
       v-if="hasText"
-      class="markdown-body"
+      class="md markdown-body"
       :class="{ 'is-streaming': streaming }"
       @click="onBodyClick"
       v-html="html"

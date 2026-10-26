@@ -144,7 +144,8 @@ async def lifespan(app: FastAPI):
         # 知识星图：知识库的真实分片只读视图，构建在首次访问时触发并落盘缓存。
         app.state.starmap = StarMapBuilder(kb_service) if kb_service else None
         app.state.runtime = AgentRuntime(
-            model = DashScopeProvider(model="qwen3.8-flash"),
+            # model = DashScopeProvider(model="qwen3.8-flash"),
+            model = OpenAIProvider(model="gpt-6-luna"),
             tools = [
                 WeatherTool(),
                 WebSearchTool(),

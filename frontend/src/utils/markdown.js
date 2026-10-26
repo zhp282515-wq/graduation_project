@@ -78,26 +78,32 @@ const md = new MarkdownIt({
   },
 })
 
-md.renderer.rules.fence = (tokens, idx) => {
-  const token = tokens[idx]
-  const info = token.info ? md.utils.unescapeAll(token.info).trim() : ''
-  const declared = info.split(/\s+/)[0] || ''
+function renderCodeBlock(content, declared = '') {
   const name = resolveLanguage(declared)
-  const highlighted = name
-    ? md.utils.escapeHtml(hljs.highlight(token.content, { language: name, ignoreIllegals: true }).value)
-    : md.utils.escapeHtml(token.content)
+  // highlight.js 已转义代码内容，只能直接使用其生成的高亮标签。
+  const highlighted = md.options.highlight(content, name) || md.utils.escapeHtml(content)
   const label = (declared || 'text').toUpperCase()
   const langClass = name ? ` language-${name}` : ''
   return (
     `<div class="code-block" data-lang="${md.utils.escapeHtml(label)}">` +
     '<div class="code-head">' +
     `<span class="code-lang">${md.utils.escapeHtml(label)}</span>` +
-    '<button type="button" class="code-copy" data-copy-code>复制</button>' +
+    '<button type="button" class="code-copy" data-copy-code aria-label="复制代码" aria-live="polite">' +
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 9V4.8h10.2V15H15 M5 9h10v10H5z" /></svg>' +
+    '<span class="code-copy-label">复制代码</span></button>' +
     '</div>' +
     `<pre class="code-body"><code class="hljs${langClass}">${highlighted}</code></pre>` +
     '</div>'
   )
 }
+
+md.renderer.rules.fence = (tokens, idx) => {
+  const token = tokens[idx]
+  const info = token.info ? md.utils.unescapeAll(token.info).trim() : ''
+  return renderCodeBlock(token.content, info.split(/\s+/)[0] || '')
+}
+
+md.renderer.rules.code_block = (tokens, idx) => renderCodeBlock(tokens[idx].content)
 
 md.renderer.rules.table_open = () => '<div class="table-wrap"><table>'
 md.renderer.rules.table_close = () => '</table></div>'

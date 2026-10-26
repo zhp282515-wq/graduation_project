@@ -18,10 +18,48 @@ describe('renderMarkdown', () => {
     expect(html).toContain('print')
   })
 
+  it('renders highlighting tags without showing their HTML as code', () => {
+    const html = renderMarkdown('```python\ndef greet(name):\n    return "你好"\n```')
+    expect(html).toContain('<span class="hljs-keyword">def</span>')
+    expect(html).not.toContain('&lt;span')
+    expect(html).toContain('    ')
+  })
+
+  it('keeps HTML examples inert and preserves their original text', () => {
+    const html = renderMarkdown('```html\n<script>alert("x")</script>\n<p>A & B</p>\n```')
+    expect(html).not.toContain('<script>')
+    expect(html).not.toContain('<p>A')
+    const code = html.match(/<code[^>]*>([\s\S]*?)<\/code>/)[1]
+    const text = code.replace(/<[^>]*>/g, '')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+    expect(text).toBe('<script>alert("x")</script>\n<p>A & B</p>\n')
+  })
+
+  it('renders code while its closing fence has not arrived in the stream', () => {
+    const html = renderMarkdown('```js\nconst value = "还在生成"\n')
+    expect(html).toContain('data-copy-code')
+    expect(html).toContain('<span class="hljs-keyword">const</span>')
+    expect(html).toContain('还在生成')
+  })
+
+  it('gives indented code the same copyable code frame', () => {
+    const html = renderMarkdown('示例：\n\n    first()\n    second()')
+    expect(html).toContain('class="code-block"')
+    expect(html).toContain('data-copy-code')
+    expect(html).toContain('first()\nsecond()\n')
+  })
+
   it('keeps unknown languages readable without a label guess', () => {
     const html = renderMarkdown('```\n随便写点什么\n```')
     expect(html).toContain('code-block')
     expect(html).toContain('随便写点什么')
+  })
+
+  it('escapes unsupported code and untrusted language labels', () => {
+    const html = renderMarkdown('```unknown"onclick="alert(1)\n<div>A & B</div>\n```')
+    expect(html).toContain('&lt;div&gt;A &amp; B&lt;/div&gt;')
+    expect(html).not.toContain('onclick="')
   })
 
   it('wraps tables so wide knowledge tables can scroll', () => {
