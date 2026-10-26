@@ -7,6 +7,7 @@ import os
 import time
 import zipfile
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
@@ -169,7 +170,8 @@ class MineruParser:
 
     def _request_upload_url(self, path: Path) -> tuple[str, str]:
         payload = {
-            "files": [{"name": path.name, "data_id": path.stem}],
+            # data_id 仅支持 ASCII 标识且最长 128 字符，不能直接使用本地文件名。
+            "files": [{"name": path.name, "data_id": uuid4().hex}],
             "model_version": self.model_version,
             "is_ocr": self.is_ocr,
             "enable_formula": self.enable_formula,
