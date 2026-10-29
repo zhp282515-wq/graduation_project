@@ -127,9 +127,13 @@ onBeforeUnmount(() => {
   <div id="entry-start" ref="root" class="entrance" :class="{ 'is-paused': pageHidden, 'has-switched-mode': hasSwitchedMode }">
     <a href="#access" class="skip-entry">跳到登录表单</a>
     <header class="entry-header">
-      <RouterLink to="/" class="entry-brand" aria-label="饭饭，校园智能体首页">
-        <img :src="seal" alt="江西师范大学校徽" width="54" height="54" />
-        <span class="brand-name">饭饭<span>校园智能体</span></span>
+      <RouterLink to="/" class="entry-brand" aria-label="江西师范大学，返回首页">
+        <svg class="entry-brand-seal" viewBox="205 80 390 390" aria-hidden="true" focusable="false">
+          <image :href="seal" width="794" height="659" />
+        </svg>
+        <svg class="entry-brand-wordmark" viewBox="60 500 700 145" aria-hidden="true" focusable="false">
+          <image :href="seal" width="794" height="659" />
+        </svg>
       </RouterLink>
       <nav aria-label="产品介绍"><a href="#conversation">问有所答</a><a href="#evidence">答有所据</a><a href="#constellation">知识成图</a></nav>
       <a v-if="auth.user" class="header-action" href="/inquiry" @click.prevent="router.push('/inquiry')">进入问学 <Icon name="arrowRight" :size="16" /></a>
@@ -269,10 +273,9 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--line);
   animation: entry-descend 720ms var(--ease-out) both;
 }
-.entry-brand { display: flex; align-items: center; gap: 14px; }
-.entry-brand img { width: 48px; height: 48px; object-fit: contain; }
-.brand-name { font-family: var(--font-serif); font-size: 25px; font-weight: 600; letter-spacing: 0.08em; line-height: 1.1; }
-.brand-name > span { display: block; margin-top: 7px; font-family: var(--font-ui); font-size: 12px; font-weight: 400; letter-spacing: 0.12em; color: var(--muted); }
+.entry-brand { display: flex; align-items: center; gap: 12px; flex: none; }
+.entry-brand-seal { width: 48px; height: 48px; }
+.entry-brand-wordmark { width: 168px; height: auto; }
 .entry-header nav { display: flex; gap: 34px; font-size: 14px; }
 .entry-header nav a { position: relative; color: var(--muted); transition: color 220ms var(--ease-out); }
 .entry-header nav a::after { content: ""; position: absolute; left: 0; right: 0; bottom: -6px; height: 1px; background: currentColor; transform: scaleX(0); transform-origin: left; transition: transform 280ms var(--ease-out); }
@@ -662,9 +665,9 @@ onBeforeUnmount(() => {
 @media (max-width: 760px) {
   .entry-header, .entry-hero, .chapter, .entry-footer, .constellation-inner, .constellation-bottom { width: calc(100% - 40px); }
   .entry-header { min-height: 74px; gap: 14px; }
-  .entry-brand img { width: 42px; height: 42px; }
-  .brand-name { font-size: 23px; }
-  .brand-name > span { font-size: 11px; margin-top: 5px; }
+  .entry-brand { gap: 9px; }
+  .entry-brand-seal { width: 40px; height: 40px; }
+  .entry-brand-wordmark { width: clamp(110px, 36vw, 150px); }
   .entry-header nav { display: none; }
   .header-action { font-size: 13px; gap: 8px; }
   .entry-hero { display: flex; flex-direction: column; gap: 0; min-height: auto; width: calc(100% - 32px); padding-block: 8px 20px; }

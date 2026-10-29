@@ -68,7 +68,7 @@ router.beforeEach(async (to) => {
 
 /** 星野只在停留期间关灯，离开后回到用户原本选择的材质。 */
 router.afterEach((to) => {
-  document.title = to.meta.public ? '饭饭 · 校园智能体' : `${to.meta.title || '问学'} · 饭饭`
+  document.title = '饭饭'
   const root = document.documentElement
   if (to.meta?.forceNight) root.dataset.forceNight = 'on'
   else delete root.dataset.forceNight
