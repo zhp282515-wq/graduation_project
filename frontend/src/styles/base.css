@@ -24,10 +24,7 @@ body,
 body {
   margin: 0;
   background-color: var(--bg);
-  background-image:
-    radial-gradient(120% 70% at 8% -10%, rgba(255, 251, 240, 0.9), transparent 62%),
-    radial-gradient(90% 60% at 100% 0%, rgba(214, 203, 182, 0.32), transparent 58%),
-    linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
+  background-image: none;
   background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-ui);
@@ -41,22 +38,7 @@ body {
 
 [data-theme="night"] body,
 [data-force-night] body {
-  background-image:
-    radial-gradient(110% 70% at 50% -20%, rgba(64, 62, 96, 0.55), transparent 60%),
-    radial-gradient(60% 50% at 100% 0%, rgba(46, 78, 88, 0.35), transparent 62%),
-    linear-gradient(180deg, #0a0a12 0%, var(--bg) 62%, var(--bg-deep) 100%);
-}
-
-/* 纸张纤维：极轻的一层噪点，只在纸本模式出现 */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  pointer-events: none;
-  opacity: var(--grain-opacity);
-  mix-blend-mode: var(--grain-blend);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  background-image: none;
 }
 
 h1,

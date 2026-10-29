@@ -15,7 +15,8 @@
 | 长期记忆抽取、注入、查看、编辑、删除 | 已有实现 |
 | 知识库上传、任务状态、分页筛选、切片查看、删除、同步 | 已有实现 |
 | PostgreSQL 业务连接池与 checkpoint 连接池 | 已有实现 |
-| 真实登录、管理员权限、用户反馈、正式评测集与 RAGAS | 尚未形成完整实现 |
+| 真实登录、管理员权限 | 已接入 JWT、Argon2id、账号管理及文档权限；初始化见 docs/auth.md |
+| 用户反馈、正式评测集与 RAGAS | 尚未形成完整实现 |
 
 “已有实现”不代表已通过真实外部服务验收。已有技术验证记录、毕业设计计划和架构草稿的状态可能滞后，功能进度以当前代码为准。
 
@@ -201,7 +202,7 @@ sequenceDiagram
     participant R as AgentRuntime
     participant G as LangGraph
 
-    B->>A: POST /api/chat（x-user-id，Accept: text/event-stream）
+    B->>A: POST /api/chat（Cookie + CSRF，Accept: text/event-stream）
     A->>S: send_message(user_id, session_id, query)
     S->>S: 校验会话归属 + 写入用户消息
     S->>R: stream(query, session_id)
@@ -272,9 +273,9 @@ docker compose up -d
 | `MINERU_API_KEY` | 当前 KnowledgeService 初始化即要求配置；MD / TXT 入库虽跳过云端解析，也需要该配置 |
 | `MINERU_BASE_URL` | 可选，留空使用 MinerU 默认 API 地址 |
 
-普通聊天启动需要 PostgreSQL 和 DashScope 配置；完整知识库还需要 Milvus 与 MinerU。知识库初始化失败时，普通聊天仍可启动，知识库管理接口返回 503；检索工具会明确返回不可用错误。恢复依赖或补齐配置后需重启服务。
+服务启动需要 PostgreSQL；聊天需要所选供应商的密钥，摘要和记忆抽取需要 DashScope 密钥，完整知识库还需要 Milvus 与 MinerU。知识库初始化失败时，普通聊天仍可启动，知识库管理接口返回 503；检索工具会明确返回不可用错误。恢复知识库依赖或补齐配置后需重启服务。
 
-`FIRECRAWL_BASE_URL` 当前未被代码读取。Firecrawl 地址固定在 `agent/tools/websearch.py`。默认主对话模型为 `qwen3.8-flash`，摘要和记忆模型为 `qwen3.7-flash`；这些是代码配置值，可用性需在所用服务账户下验证。OpenAIProvider 需要手动切换，默认地址也应检查后再使用，当前不是自动故障切换方案。
+`FIRECRAWL_BASE_URL` 当前未被代码读取。Firecrawl 地址固定在 `agent/tools/websearch.py`。默认主对话模型为 `deepseek-flash`，管理员可在设置中选择服务端 `config/chat_models.json` 列出的供应商和模型；摘要和记忆模型仍为 `qwen3.7-flash`。模型可用性需在所用服务账户下验证，不会自动故障切换。OpenAI 默认使用官方 API 地址；如需使用兼容服务，请显式配置 `OPENAI_BASE_URL`。
 
 ### 3. 安装后端依赖
 
@@ -322,7 +323,7 @@ npm run dev            # http://localhost:5173
 
 ## HTTP 接口
 
-上传使用 multipart，聊天响应使用 SSE，其余主要为 JSON。会话、聊天、图片上传、记忆接口通过 `x-user-id` 请求头识别用户，缺失返回 401；前端目前固定为 `user_001`。这是开发期临时身份方案，**不是真实鉴权**。知识库管理接口目前未接入用户及管理员权限；`/uploads` 为静态公开访问。当前运行说明按本地开发用途编写。
+上传使用 multipart，聊天响应使用 SSE，其余主要为 JSON。接口现使用 PyJWT 签名的 HttpOnly Cookie 鉴权，写请求校验 Origin 与 CSRF；不再接受 `x-user-id` 作为身份。用户仅能访问自己的会话、记忆和图片；文档查看、AI 检索与星图按公开 / 管理员可见范围过滤，文档与账号管理仅管理员可用。首次启用需初始化管理员，详见 [账号与权限说明](docs/auth.md)。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -333,7 +334,7 @@ npm run dev            # http://localhost:5173
 | POST | `/api/chat` | SSE 流式对话，请求体 `{session_id, text, images, reasoning}`；同会话重复运行返回 409 |
 | POST | `/api/sessions/{id}/messages/{message_id}/regenerate` | 无请求体，返回同样的 SSE；只替换目标 AI 回复，生成中 409，目标或会话不存在 404，原问题或图片无法恢复 422 |
 | POST | `/api/upload` | 上传图片，仅 jpeg/png/gif/webp，上限 10MB，文件名由服务端 uuid 生成 |
-| GET | `/uploads/{name}` | 静态托管上传目录，供前端 `<img>` 回显 |
+| GET | `/uploads/{name}` | 检查登录和归属，私有回显上传图片 |
 | GET | `/api/memories` | 当前用户的长期记忆 |
 | PUT | `/api/memories/{id}` | 编辑自己的记忆，请求体 `{content}` |
 | DELETE | `/api/memories/{id}` | 删除自己的记忆 |
@@ -422,3 +423,9 @@ npm run build       # 生产构建（Windows 需先把 TEMP 指到可写目录�
 ## License
 
 本项目为本科毕业设计，仅供学习交流。
+
+## 产品入口与账号初始化
+
+首页 `/` 现为饭饭产品入口，包含登录 / 注册和可滚动的问答、引用、星图交互示例。已登录可进入问学，管理员另有账号管理与独立检索入口。
+
+首次启用先备份数据库，在项目 Python 环境及仓库根目录执行 `python -m auth.bootstrap`，按提示设置首个管理员并接管旧演示数据。完整配置、接口及迁移说明见 [docs/auth.md](docs/auth.md)。

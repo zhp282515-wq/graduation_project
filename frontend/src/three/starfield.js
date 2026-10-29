@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { createMeteors } from './meteors'
+import { createCosmos } from './cosmos'
 
 /**
  * 知识星图的 WebGL 渲染层。
@@ -7,7 +9,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
  * 这里只负责"把真实分片画成星体、把真实关系画成线"：
  * 星体坐标由后端 StarMapBuilder 生成（见 knowledge/starmap.py），
  * 同文档相邻分片的连线是真实顺序关系，语义连线是后端用 embedding 余弦相似度算出来的。
- * 本文件不生成任何假数据。
+ * 不生成虚构的知识分片或关系；远景星尘与流星仅为背景装饰。
  */
 
 const VERTEX = `
@@ -23,79 +25,58 @@ const VERTEX = `
   varying vec3 vColor;
   varying float vAlpha;
   varying float vEmph;
-  varying float vSel;
+  varying float vSize;
 
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     float dist = max(1.0, -mv.z);
-    float twinkle = 0.88 + 0.12 * sin(uTime * 0.9 + aPhase * 6.28318);
+    // 闪烁只做很小的幅度：星星是一颗稳定亮着的光点，不该整体忽明忽暗。
+    float twinkle = 0.95 + 0.05 * sin(uTime * 0.9 + aPhase * 6.28318);
     // 高亮只做两件事：轻微放大 + 柔和呼吸，不再画圆环。
     float shimmer = 0.5 + 0.5 * sin(uTime * 1.55 + aPhase * 6.28318);
     float emph = clamp(aEmphasis, 0.0, 2.0);
     float hoverBoost = emph > 0.01 && emph < 1.5 ? (0.78 + 0.34 * shimmer) * emph : 0.0;
     float selectBoost = emph >= 1.5 ? 1.30 + 0.24 * shimmer : 0.0;
     float boost = max(hoverBoost, selectBoost);
-    float sizeBoost = 1.0 + (emph >= 1.5 ? 0.95 : 0.46 * emph);
-    gl_PointSize = aSize * uPixel * (196.0 / dist) * twinkle * sizeBoost;
-    gl_PointSize = clamp(gl_PointSize, 1.1, emph > 0.01 ? 12.6 : 9.2);
+    float sizeBoost = 1.0 + (emph >= 1.5 ? 1.55 : 0.8 * emph);
+    // 星体只占一两个像素：亮的是一颗粒子，不是一团雾。
+    // 距离只做很轻的缩放，星星之间的差别主要来自星等（aSize 与 aColor）。
+    float size = aSize * clamp(110.0 / dist, 0.8, 1.5) * twinkle * sizeBoost;
+    size = clamp(size, 1.0 + boost * 0.4, emph > 0.01 ? 6.2 : 3.6);
+    gl_PointSize = size * uPixel;
+    vSize = gl_PointSize;
     // 近亮远暗：让星群有纵深，而不是压成一片白。
-    float depth = clamp(uFocus / dist, 0.46, 1.0);
+    float depth = clamp(uFocus / dist, 0.78, 1.0);
     vColor = aColor;
-    float dimOthers = mix(1.0, 0.8, uSel * (1.0 - clamp(emph, 0.0, 1.0)));
-    vAlpha = mix(0.05, 1.12, aVisible) * twinkle * depth * (1.0 + boost * 1.08) * dimOthers;
+    float dimOthers = mix(1.0, 0.86, uSel * (1.0 - clamp(emph, 0.0, 1.0)));
+    float baseBrightness = mix(0.9, 1.0, smoothstep(0.01, 1.5, emph));
+    vAlpha = mix(0.05, 1.0, aVisible) * twinkle * depth * (1.0 + boost * 0.3) * dimOthers * baseBrightness;
     vEmph = boost;
-    vSel = smoothstep(1.2, 1.9, emph);
     gl_Position = projectionMatrix * mv;
   }
 `
 
 const FRAGMENT = `
-  uniform float uTime;
   varying vec3 vColor;
   varying float vAlpha;
   varying float vEmph;
-  varying float vSel;
+  varying float vSize;
 
   void main() {
-    vec2 uv = gl_PointCoord - 0.5;
-    float d = length(uv);
-    if (d > 0.5) discard;
-    float core = smoothstep(0.5, 0.0, d);
-    float glow = pow(core, 4.2);
-    float spike = max(0.0, 1.0 - abs(uv.x) * 18.0) * max(0.0, 1.0 - abs(uv.y) * 2.6);
-    // 光晕收紧：半径更小、权重更低，避免盖住旁边的星。
-    float halo = pow(core, 1.25) * (0.042 + vEmph * 0.026);
-    // 被选中的那颗星持续轻微呼吸：幅度控制在 ~15%，不扩散成大光斑。
-    float breathe = 0.5 + 0.5 * sin(uTime * 2.3);
-    float selGain = vSel * (0.16 + 0.34 * breathe);
-    float alpha = (glow * 1.12 + halo * 0.9 + spike * 0.07) * vAlpha * (1.0 + selGain);
-    vec3 color = vColor * (0.72 + glow * 1.0) + vec3(glow * 0.08) + vec3(spike * 0.15)
-      + vColor * vEmph * 0.74 * glow
-      + vColor * vSel * (0.10 + 0.24 * breathe) * glow;
-    gl_FragColor = vec4(color, alpha);
+    float radius = length(gl_PointCoord - 0.5);
+    // 边缘只留一个设备像素的抗锯齿：圆里是实心的，圆外立刻结束，没有渐隐的光晕。
+    float edge = clamp(1.0 / max(vSize, 1.0), 0.08, 0.34);
+    float disc = 1.0 - smoothstep(0.5 - edge, 0.5, radius);
+    if (disc < 0.004) discard;
+    // 中心更亮一点：亮星的核心接近白，暗星的核心也只是自己那点灰度。
+    float core = 1.0 - smoothstep(0.0, 0.5, radius);
+    vec3 color = min(vColor * (1.0 + core * 0.55) * (1.0 + vEmph * 0.85), vec3(1.0));
+    gl_FragColor = vec4(color, disc * clamp(vAlpha, 0.0, 1.0));
   }
 `
 
 function hueColor(hue, lightness = 0.74, saturation = 0.2) {
   return new THREE.Color().setHSL(((hue % 360) + 360) % 360 / 360, saturation, lightness)
-}
-
-function makeGlowTexture() {
-  const size = 128
-  const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
-  gradient.addColorStop(0, 'rgba(255,255,255,0.85)')
-  gradient.addColorStop(0.28, 'rgba(255,255,255,0.28)')
-  gradient.addColorStop(0.62, 'rgba(255,255,255,0.07)')
-  gradient.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, size, size)
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.needsUpdate = true
-  return texture
 }
 
 function makeRingTexture() {
@@ -179,7 +160,7 @@ export function createStarField(container, options = {}) {
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.06
-  controls.rotateSpeed = 0.55
+  controls.rotateSpeed = 0.46
   controls.zoomSpeed = 0.9
   controls.panSpeed = 0.7
   controls.minDistance = 24
@@ -189,21 +170,11 @@ export function createStarField(container, options = {}) {
 
   const root = new THREE.Group()
   scene.add(root)
+  const cosmos = createCosmos({ lowPower })
+  scene.add(cosmos.group)
+  const meteors = createMeteors({ lowPower })
+  scene.add(meteors.mesh)
 
-  const glowTexture = makeGlowTexture()
-  // 选中星体的小光晕：只服务「这颗星在哪」的识别，半径约 30px，随呼吸轻微起伏。
-  const selectionGlow = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      map: glowTexture,
-      color: 0xfff2dc,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    }),
-  )
-  selectionGlow.visible = false
-  scene.add(selectionGlow)
   const ringTexture = makeRingTexture()
 
   const starUniforms = {
@@ -217,9 +188,7 @@ export function createStarField(container, options = {}) {
   let starGeometry = null
   let chainLines = null
   let semanticLines = null
-  let nebulaGroup = null
   let rings = null
-  const nebulaBreathe = []
   let emphasisCurrent = null
   let emphasisGoal = null
   const slotById = new Map()
@@ -228,8 +197,8 @@ export function createStarField(container, options = {}) {
   let labelLimit = Math.max(0, Number(labelLimitOption) || 0)
   let labelSink = typeof onLabels === 'function' ? onLabels : null
   let lastLabelPush = 0
-  let farField = null
-    let pointList = []
+  let immersive = false
+  let pointList = []
   let pointIndex = new Map()
   let docRadius = new Map()
   let selectedPoint = null
@@ -253,13 +222,13 @@ export function createStarField(container, options = {}) {
   // ---- 自动旋转 / 交互节流 -------------------------------------------------
   // 旋转由 OrbitControls 驱动（按帧时间推进，天然与刷新率解耦），
   // 这里只负责把「目标速度」平滑地推上去或收下来，避免速度跳变。
-  const AUTO_SPEED = 0.85
+  const AUTO_SPEED = 0.5
   const autoReasons = new Set()
   let autoUserEnabled = Boolean(autoRotate)
   let autoSpeed = 0
   let hoverLock = false
   let lastFrameAt = performance.now()
-  let elapsed = 0
+  let animationTime = 0
   let frames = 0
   let fpsWindowStart = performance.now()
   let fps = 0
@@ -332,7 +301,7 @@ export function createStarField(container, options = {}) {
       if (child.material) {
         const materials = Array.isArray(child.material) ? child.material : [child.material]
         materials.forEach((material) => {
-          if (material.map && material.map !== glowTexture && material.map !== ringTexture) {
+          if (material.map && material.map !== ringTexture) {
             material.map.dispose()
           }
           material.dispose()
@@ -340,47 +309,6 @@ export function createStarField(container, options = {}) {
       }
     })
     root.remove(group)
-  }
-
-  function buildFarField() {
-    const count = lowPower ? 700 : 1500
-    const positions = new Float32Array(count * 3)
-    const colors = new Float32Array(count * 3)
-    const sizes = new Float32Array(count)
-    const phases = new Float32Array(count)
-    const visible = new Float32Array(count).fill(1)
-    const emphasis = new Float32Array(count)
-    const palette = [0xb9b2a2, 0xd6c9ae, 0xa8b0ad, 0xcbbfae]
-    for (let i = 0; i < count; i += 1) {
-      const radius = 1500 + Math.random() * 1700
-      const theta = Math.random() * Math.PI * 2
-      const phi = Math.acos(2 * Math.random() - 1)
-      positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta)
-      positions[i * 3 + 1] = radius * Math.cos(phi) * 0.65
-      positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta)
-      const color = new THREE.Color(palette[i % palette.length]).multiplyScalar(0.34 + Math.random() * 0.3)
-      colors[i * 3] = color.r
-      colors[i * 3 + 1] = color.g
-      colors[i * 3 + 2] = color.b
-      sizes[i] = 1.6 + Math.random() * 3.4
-      phases[i] = Math.random()
-    }
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3))
-    geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1))
-    geometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1))
-    geometry.setAttribute('aVisible', new THREE.BufferAttribute(visible, 1))
-    geometry.setAttribute('aEmphasis', new THREE.BufferAttribute(emphasis, 1))
-    const material = new THREE.ShaderMaterial({
-      uniforms: starUniforms,
-      vertexShader: VERTEX,
-      fragmentShader: FRAGMENT,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-    return new THREE.Points(geometry, material)
   }
 
   function buildRings(radius) {
@@ -391,7 +319,7 @@ export function createStarField(container, options = {}) {
       const material = new THREE.LineBasicMaterial({
         color: ink,
         transparent: true,
-        opacity: index === 1 ? 0.24 : 0.13,
+        opacity: index === 1 ? 0.085 : 0.04,
         depthWrite: false,
       })
       group.add(new THREE.Line(circleGeometry(value), material))
@@ -413,45 +341,9 @@ export function createStarField(container, options = {}) {
     group.add(
       new THREE.LineSegments(
         tickGeometry,
-        new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: 0.26, depthWrite: false }),
+        new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: 0.07, depthWrite: false }),
       ),
     )
-    return group
-  }
-
-  function buildNebulae(documents, points) {
-    const group = new THREE.Group()
-    const centers = new Map()
-    documents.forEach((doc) => {
-      centers.set(doc.file_md5, { doc, positions: [] })
-    })
-    points.forEach((point) => {
-      const entry = centers.get(point.file_md5)
-      if (entry) entry.positions.push(point)
-    })
-    documents.forEach((doc) => {
-      const center = new THREE.Vector3(
-        Number(doc.center?.[0]) || 0,
-        Number(doc.center?.[1]) || 0,
-        Number(doc.center?.[2]) || 0,
-      )
-      const color = hueColor(doc.hue ?? 212, 0.62, 0.16)
-      const sprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: glowTexture,
-          color,
-          transparent: true,
-          opacity: 0.05,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-        }),
-      )
-      const radius = Math.max(14, (Number(doc.radius) || 12) * 1.05)
-      sprite.position.copy(center)
-      sprite.scale.setScalar(radius * 2.0)
-      group.add(sprite)
-      nebulaBreathe.push({ sprite, base: radius * 2.0, phase: (doc.hue ?? 0) * 0.071 })
-    })
     return group
   }
 
@@ -504,6 +396,9 @@ export function createStarField(container, options = {}) {
     const phases = new Float32Array(count)
     const visible = new Float32Array(count).fill(1)
     const emphasis = new Float32Array(count)
+    // 真实星空里只有最亮的那几颗看得出星温，其余都是接近白的点。
+    const warmStar = new THREE.Color(0xffcf9a)
+    const coolStar = new THREE.Color(0xc6d8ff)
 
     points.forEach((point, index) => {
       positions[index * 3] = Number(point.x) || 0
@@ -511,13 +406,19 @@ export function createStarField(container, options = {}) {
       positions[index * 3 + 2] = Number(point.z) || 0
       const doc = docMap.get(point.file_md5)
       const hue = doc?.hue ?? 212
-      const lightness = 0.58 + ((point.chunk_index % 7) / 7) * 0.16
-      const color = hueColor(hue, lightness, 0.18)
-      colors[index * 3] = color.r
-      colors[index * 3 + 1] = color.g
-      colors[index * 3 + 2] = color.b
-      const base = Number(point.size) || 1
-      sizes[index] = 1.75 + Math.min(2.6, base * 0.8)
+      // 星等：幂律分布——大多是暗星，少数亮星。真实星空的分层就来自这里。
+      const rank = (index * 0.7548776662) % 1
+      const heft = Math.min(1, (Number(point.size) || 1) / 4.4)
+      const magnitude = Math.pow(rank, 1.9) * 0.86 + heft * 0.14
+      // 色温：文档色相只留一点点色偏，亮星才看得出冷暖，暗星接近灰白。
+      const tint = hueColor(hue, 0.95, 0.14)
+      const thermal = Math.max(0, (magnitude - 0.55) / 0.45)
+      tint.lerp((index * 0.4142135624) % 1 < 0.5 ? warmStar : coolStar, thermal * 0.5)
+      const level = 0.3 + Math.pow(magnitude, 1.0) * 0.7
+      colors[index * 3] = tint.r * level
+      colors[index * 3 + 1] = tint.g * level
+      colors[index * 3 + 2] = tint.b * level
+      sizes[index] = 0.95 + magnitude * 2.5
       phases[index] = (index * 0.61803398875) % 1
     })
 
@@ -536,7 +437,9 @@ export function createStarField(container, options = {}) {
       fragmentShader: FRAGMENT,
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // 星体用正常混合：亮就是这一颗星本身的亮。
+      // 叠加混合会让星群密集处的点彼此累加，堆出一片没有边界的雾光。
+      blending: THREE.NormalBlending,
     })
 
     return new THREE.Points(geometry, material)
@@ -556,8 +459,8 @@ export function createStarField(container, options = {}) {
       positions[index * 6 + 4] = to.y
       positions[index * 6 + 5] = to.z
       if (colors) {
-        const c1 = hueColor(pair.fromHue ?? 212, 0.62, 0.5)
-        const c2 = hueColor(pair.toHue ?? 212, 0.62, 0.5)
+        const c1 = hueColor(pair.fromHue ?? 212, 0.46, 0.12)
+        const c2 = hueColor(pair.toHue ?? 212, 0.46, 0.12)
         colors[index * 6] = c1.r
         colors[index * 6 + 1] = c1.g
         colors[index * 6 + 2] = c1.b
@@ -604,20 +507,16 @@ export function createStarField(container, options = {}) {
     if (starPoints) clearGroup(starPoints)
     if (chainLines) clearGroup(chainLines)
     if (semanticLines) clearGroup(semanticLines)
-    if (nebulaGroup) clearGroup(nebulaGroup)
     if (rings) clearGroup(rings)
     rings = null
-    nebulaBreathe.length = 0
 
     const withHue = documents.map((doc) => ({ ...doc }))
     starPoints = buildStars(points, withHue)
     root.add(starPoints)
-    nebulaGroup = buildNebulae(withHue, points)
-    root.add(nebulaGroup)
 
     labels = buildLabels(withHue)
 
-    chainLines = buildLines(chainPairs, { color: 0xb3b7bd, opacity: 0.022, vertexColors: true })
+    chainLines = buildLines(chainPairs, { color: 0xa9b0b8, opacity: 0.055, vertexColors: true })
     if (chainLines) root.add(chainLines)
 
     const edgePairs = edges
@@ -627,7 +526,7 @@ export function createStarField(container, options = {}) {
         return from && to ? { from, to } : null
       })
       .filter(Boolean)
-    semanticLines = buildLines(edgePairs, { color: 0xb9a58e, opacity: 0.085 })
+    semanticLines = buildLines(edgePairs, { color: 0x9c948a, opacity: 0.1 })
     if (semanticLines) root.add(semanticLines)
 
     // 尺度：用分片分布的中位数半径决定相机距离，少数离群星不会把镜头拉太远。
@@ -653,12 +552,8 @@ export function createStarField(container, options = {}) {
     rings = buildRings(fitRadius * 1.0)
     rings.position.copy(center)
     rings.position.y = center.y - fitRadius * 0.04
+    rings.visible = !immersive
     root.add(rings)
-
-    if (!farField) {
-      farField = buildFarField()
-      scene.add(farField)
-    }
 
     controls.target.copy(center)
     const dir = new THREE.Vector3(0.44, 0.52, 1).normalize()
@@ -750,15 +645,12 @@ export function createStarField(container, options = {}) {
     const point = selectedPoint
     if (point) {
       starUniforms.uSel.value = 1
-      selectionGlow.position.set(point.x, point.y, point.z)
-      selectionGlow.visible = true
       setAutoPaused('selection', true)
       if (!fly) return
       // 选中：平滑移到视觉中心，并推到允许的最大查看尺度；连续切换时从当前飞行状态接管。
       focusPoint(point, { screenOffset, distance })
     } else {
       starUniforms.uSel.value = 0
-      selectionGlow.visible = false
       setAutoPaused('selection', false)
     }
   }
@@ -1015,6 +907,7 @@ export function createStarField(container, options = {}) {
   function onReducedMotionChange(event) {
     reducedMotion = Boolean(event.matches)
     if (reducedMotion) {
+      meteors.reset()
       autoSpeed = 0
       controls.autoRotate = false
     }
@@ -1040,15 +933,12 @@ export function createStarField(container, options = {}) {
     const dt = Math.min(0.06, Math.max(0, (now - lastFrameAt) / 1000))
     lastFrameAt = now
     // 时间只在渲染时累加：切走标签页再回来，星体闪烁与刻度环都从原处继续，不会突跳。
-    elapsed += dt
-    starUniforms.uTime.value = elapsed
-    if (selectionGlow.visible && selectedPoint) {
-      const dist = camera.position.distanceTo(selectionGlow.position)
-      const worldPerPixel = (2 * Math.tan((camera.fov * Math.PI) / 360) * dist) / Math.max(1, renderer.domElement.clientHeight)
-      const px = 38 + 4 * Math.sin(elapsed * 2.3)
-      selectionGlow.scale.set(px * worldPerPixel, px * worldPerPixel, 1)
-      selectionGlow.material.opacity = 0.14 + 0.10 * (0.5 + 0.5 * Math.sin(elapsed * 2.3))
-    }
+    if (!reducedMotion) animationTime += dt
+    starUniforms.uTime.value = animationTime
+    meteors.update(dt, container.clientWidth, container.clientHeight, {
+      enabled: !reducedMotion && hasData,
+      paused: autoReasons.size > 0 || Boolean(flight),
+    })
 
     const target = autoTarget()
     autoSpeed += (target - autoSpeed) * Math.min(1, dt * 2.6)
@@ -1076,16 +966,10 @@ export function createStarField(container, options = {}) {
       }
       if (dirty) attribute.needsUpdate = true
     }
-    for (let i = 0; i < nebulaBreathe.length; i += 1) {
-      const item = nebulaBreathe[i]
-      const wave = Math.sin(elapsed * 0.42 + item.phase)
-      item.sprite.scale.setScalar(item.base * (1 + wave * 0.045))
-      item.sprite.material.opacity = 0.105 + wave * 0.022
-    }
-    if (rings && !reducedMotion) rings.rotation.y = elapsed * 0.012
-    if (farField) farField.rotation.y = elapsed * 0.004
-    if (root) root.rotation.y = Math.sin(elapsed * 0.03) * 0.02
+    if (rings && !reducedMotion) rings.rotation.y = animationTime * 0.012
+    if (root) root.rotation.y = Math.sin(animationTime * 0.03) * 0.02
     controls.update(dt)
+    cosmos.update(camera, dt, renderer.getPixelRatio(), reducedMotion)
     const focus = camera.position.distanceTo(controls.target)
     starUniforms.uFocus.value = focus
     const vw = renderer.domElement.clientWidth
@@ -1168,6 +1052,8 @@ export function createStarField(container, options = {}) {
     renderer.domElement.removeEventListener('pointerdown', onPointerDown)
     renderer.domElement.removeEventListener('pointerup', onPointerUp)
     controls.dispose()
+    cosmos.dispose()
+    meteors.dispose()
     scene.traverse((child) => {
       if (child.geometry) child.geometry.dispose()
       if (child.material) {
@@ -1178,8 +1064,6 @@ export function createStarField(container, options = {}) {
         })
       }
     })
-    selectionGlow.material.dispose()
-    glowTexture.dispose()
     ringTexture.dispose()
     renderer.dispose()
     if (renderer.domElement.parentNode === container) container.removeChild(renderer.domElement)
@@ -1201,8 +1085,13 @@ export function createStarField(container, options = {}) {
     setAutoPaused,
     setLabelsVisible,
     setLabelLimit,
+    setImmersive(value) {
+      immersive = Boolean(value)
+      if (rings) rings.visible = !immersive
+    },
     setReducedMotion(value) {
       reducedMotion = Boolean(value)
+      meteors.reset()
       autoSpeed = 0
       controls.autoRotate = false
       lastFrameAt = performance.now()
@@ -1211,7 +1100,7 @@ export function createStarField(container, options = {}) {
     isAutoRotating,
     saveCameraState,
     restoreCameraState,
-    getPerf: () => ({ fps, autoSpeed, reducedMotion, autoUserEnabled }),
+    getPerf: () => ({ fps, autoSpeed, reducedMotion, autoUserEnabled, immersive, cosmos: cosmos.getState(), meteor: meteors.getState() }),
     getCamera: () => ({
       position: camera.position.toArray(),
       target: controls.target.toArray(),

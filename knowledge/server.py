@@ -220,6 +220,7 @@ class KnowledgeService:
         top_k: int,
         *,
         min_score: float = 0.0,
+        expression: str = "",
     ) -> list[dict[str, Any]]:
         """纯稠密检索的原始命中。min_score 默认 0（不过滤）。
 
@@ -230,6 +231,7 @@ class KnowledgeService:
             self.embedder.embed_query(query),
             limit=top_k,
             output_fields=_SEARCH_FIELDS,
+            expression=expression,
         )
         if min_score <= 0:
             return hits
@@ -241,6 +243,7 @@ class KnowledgeService:
         top_k: int,
         *,
         min_score: float = _FUSION_MIN_SCORE,
+        expression: str = "",
     ) -> list[dict[str, Any]]:
         """稠密 + BM25 混合检索（RRF 融合）+ 融合分下限过滤，返回原始命中。
 
@@ -255,6 +258,7 @@ class KnowledgeService:
             self.embedder.embed_query(query),
             limit=top_k,
             output_fields=_SEARCH_FIELDS,
+            expression=expression,
         )
         if min_score <= 0:
             return hits
@@ -280,25 +284,34 @@ class KnowledgeService:
         query: str,
         top_k: int = _RECALL_TOP_K,
         top_n: int = _RERANK_TOP_N,
+        *, expression: str = "",
     ) -> list[dict[str, Any]]:
         """③ 混合检索 → 重排 → 阈值截断。生产链路用这个。
 
         先召回 top_k(20) 个候选再精排出 top_n(5)：只对最终条数重排等于没排。
         重排失败时退回混合检索顺序，不让整条链路挂掉。
         """
-        candidates = self._hybrid_search(query, top_k)
+        candidates = self._hybrid_search(query, top_k, expression=expression)
         if not candidates:
             return []
+
+        items, _ = self._rerank_candidates(query, candidates, top_n)
+        return items
+
+    def _rerank_candidates(
+        self, query: str, candidates: list[dict[str, Any]], top_n: int,
+    ) -> tuple[list[dict[str, Any]], str]:
+        """对已有候选重排；失败时保留 RRF 顺序供调用方安全降级。"""
 
         try:
             ranked = self.reranker.rerank(
                 query,
                 [hit["text"] for hit in candidates],
-                top_n=top_n,
+                top_n=min(top_n, len(candidates)),
             )
         except Exception:
             logger.exception("重排失败，退回混合检索顺序")
-            return [self._with_source(hit) for hit in candidates[:top_n]]
+            return [self._with_source(hit) for hit in candidates[:top_n]], "fallback"
 
         hits: list[dict[str, Any]] = []
         for item in ranked:
@@ -307,12 +320,40 @@ class KnowledgeService:
             if not isinstance(index, int) or not 0 <= index < len(candidates):
                 logger.warning("重排返回越界下标 %s，已跳过", index)
                 continue
-            if isinstance(score, float) and score < _RERANK_MIN_SCORE:
+            if isinstance(score, (int, float)) and score < _RERANK_MIN_SCORE:
                 continue
             hit = dict(candidates[index])      # 浅拷贝：不污染候选列表
             hit["score"] = score               # 用重排分覆盖 RRF 分
             hits.append(self._with_source(hit))
-        return hits
+        return hits[:top_n], "success"
+
+    def debug_retriever(
+        self, query: str, mode: str, top_k: int, top_n: int, *, expression: str,
+    ) -> dict[str, Any]:
+        """单次召回，返回调试指标；candidate_file_md5s 仅供权限复核使用。"""
+        if mode == "vector":
+            candidates = self._dense_search(query, top_k, expression=expression)
+            score_type, status = "cosine", "not_requested"
+        elif mode in ("hybrid", "hybrid_rerank"):
+            candidates = self._hybrid_search(query, top_k, expression=expression)
+            score_type = "rerank" if mode == "hybrid_rerank" else "rrf"
+            status = "not_run" if mode == "hybrid_rerank" else "not_requested"
+        else:
+            raise ValueError(f"未知检索模式: {mode}")
+
+        if mode == "hybrid_rerank" and candidates:
+            items, status = self._rerank_candidates(query, candidates, top_n)
+            if status == "fallback":
+                score_type = "rrf"
+        else:
+            items = [self._with_source(hit) for hit in candidates[:top_n]]
+
+        return {
+            "items": items,
+            "score_type": score_type,
+            "rerank_status": status,
+            "candidate_file_md5s": [hit.get("file_md5") for hit in candidates],
+        }
 
 if __name__ == '__main__':
 

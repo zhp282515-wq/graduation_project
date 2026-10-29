@@ -9,7 +9,7 @@ import TurnItem from '../components/chat/TurnItem.vue'
 import SourceSheet from '../components/chat/SourceSheet.vue'
 import Icon from '../components/ui/Icon.vue'
 import { CAMPUS_LINKS } from '../config/campusLinks'
-import { formatNumber, shortDocTitle } from '../utils/format'
+import { shortDocTitle } from '../utils/format'
 import sealUrl from '../assets/school-seal.svg'
 
 const route = useRoute()
@@ -36,37 +36,6 @@ const title = computed(() => conversations.activeSession?.title || '新的会话
 const isEmpty = computed(() => !turns.value.length && conversations.historyStatus !== 'loading')
 
 const docs = computed(() => (library.items || []).filter((doc) => Number(doc.chunk_count) > 0))
-
-const stats = computed(() => {
-  // 用后端聚合值：当前页 items 的求和会把 1,759 片显示成 19 片。
-  const docCount = Number(library.overview?.documents) || library.facets?.all || library.total || 0
-  const chunkCount =
-    Number(library.overview?.chunks) ||
-    (library.items || []).reduce((sum, doc) => sum + (Number(doc.chunk_count) || 0), 0)
-  return { docCount, chunkCount }
-})
-
-const SUGGESTION_TEMPLATES = [
-  (title) => `帮我概括「${title}」里最关键的几条内容。`,
-  (title) => `「${title}」里提到了哪些办事流程、时间或地点？`,
-  (title) => `关于「${title}」，学生最常问的是什么？`,
-  (title) => `「${title}」里有哪些电话、办公地点或申请条件？`,
-]
-
-const suggestions = computed(() => {
-  const picked = docs.value.slice(0, 4)
-  if (!picked.length) return []
-  return picked.map((doc, index) => {
-    const title = shortDocTitle(doc.original_name || doc.file_name)
-    const template = SUGGESTION_TEMPLATES[index % SUGGESTION_TEMPLATES.length]
-    return {
-      key: doc.file_md5,
-      label: title,
-      type: String(doc.file_type || '').toUpperCase() || 'DOC',
-      prompt: template(title),
-    }
-  })
-})
 
 const quickAsks = [
   '图书馆几点开门？周末开放吗？',
@@ -148,30 +117,27 @@ function handleRegenerate(turnKey) {
   conversations.regenerate(turnKey)
 }
 
-/** 失败后把这一轮的问题与图片放回书写台，等价旧版的「重新填写问题」。 */
-function openLedgerPanel() {
-  if (ui.ledgerPinned) {
-    if (window.innerWidth >= 1100) {
-      document.querySelector('.ledger--inline input[type="search"]')?.focus()
-      return
-    }
-    ui.openLedger(true, true)
+function expandLedger() {
+  if (!ui.ledgerWide) {
+    ui.openLedger(!ui.ledgerOpen)
     return
   }
-  ui.openLedger()
+  const previousFocus = document.activeElement
+  ui.ledgerExpanded = true
+  nextTick(() => window.setTimeout(() => {
+    if (ui.ledgerWide && ui.ledgerExpanded && route.name === 'inquiry' &&
+        (document.activeElement === previousFocus || document.activeElement === document.body)) {
+      document.querySelector('#session-ledger button[aria-label="折叠会话栏"]')?.focus()
+    }
+  }, 340))
 }
 
+/** 失败后把这一轮的问题与图片放回书写台，等价旧版的「重新填写问题」。 */
 function handleRefill(turn) {
   if (!turn) return
   composer.value?.setText(turn.userText || '')
   if (turn.images?.length) composer.value?.setImages(turn.images)
   ui.notify('问题已放回书写台，确认后可重新发送', 'ok')
-}
-
-function newSession() {
-  conversations.startNew()
-  router.push({ name: 'inquiry' })
-  nextTick(() => composer.value?.focus())
 }
 
 function openSource(source) {
@@ -270,124 +236,58 @@ onBeforeUnmount(() => {
 <template>
   <div class="inquiry">
     <header class="view-head inquiry-head">
-      <div class="head-main">
-        <p class="eyebrow">问学 <span class="slash">/</span> INQUIRY</p>
-        <h1 class="head-title">{{ title }}</h1>
-      </div>
-      <div class="head-actions">
-        <button type="button" class="btn ghost ledger-btn" title="会话档案（⌘J）" @click="openLedgerPanel">
-          <Icon name="archive" :size="13" />
-          <span class="ledger-label">会话档案</span>
-          <span v-if="conversations.sessions.length" class="badge mono">{{ conversations.sessions.length }}</span>
+      <div class="head-brand">
+        <button
+          v-if="!ui.ledgerWide || !ui.ledgerExpanded"
+          id="ledger-toggle"
+          type="button"
+          class="icon-btn ledger-toggle"
+          :aria-expanded="ui.ledgerWide ? ui.ledgerExpanded : ui.ledgerOpen"
+          aria-controls="session-ledger"
+          aria-label="展开会话栏"
+          title="展开会话栏"
+          @click="expandLedger"
+        >
+          <Icon name="panelLeft" :size="18" />
         </button>
-        <button type="button" class="btn ghost" @click="newSession">
-          <Icon name="plus" :size="13" />
-          新会话
-        </button>
+        <img class="head-seal" :src="sealUrl" alt="江西师范大学校徽" width="72" height="60" />
+        <div class="head-main">
+          <p class="eyebrow">问学 <span class="slash">/</span> INQUIRY</p>
+          <h1 class="head-title">{{ title }}</h1>
+        </div>
       </div>
     </header>
 
     <div ref="scroller" class="thread-scroll" @scroll.passive="onScroll">
-      <div v-if="isEmpty" class="hero">
-        <div class="hero-head">
-          <div class="hero-mark">
-            <span class="hero-name">江西师范大学</span>
-            <span class="hero-role mono">校园知识助手 · CAMPUS ASSISTANT</span>
-            <span class="hair" />
-            <span class="mono">2026</span>
-          </div>
-          <figure class="hero-emblem">
-            <img class="hero-seal" :src="sealUrl" alt="江西师范大学校徽" width="64" height="53" />
-            <figcaption class="mono">1940 · NANCHANG</figcaption>
-          </figure>
-        </div>
+      <div v-if="isEmpty" class="hero hero-empty">
+        <div class="hero-center">
+          <h2 class="hero-title">今天，问点什么？</h2>
 
-        <div class="hero-spread">
-          <div class="hero-main">
-            <h2 class="hero-title">
-              <span class="hero-cn">问学</span>
-              <span class="hero-latin">The quiet desk</span>
-            </h2>
-
-            <p class="hero-lede">
-              江西师范大学的校园智能体。档案、天气、校务与规章都在知识库里，
-              提问之后，答案会带着它的出处一起回来。
-            </p>
-
-            <div class="hero-rule">
-              <span class="mono">CAMPUS KNOWLEDGE</span>
-              <span class="rule-line" />
-              <span class="mono">{{ formatNumber(stats.docCount) }} 篇 · {{ formatNumber(stats.chunkCount) }} 片段</span>
-            </div>
-
-            <div v-if="suggestions.length" class="suggest-block">
-              <p class="block-label mono">从档案里挑一个开始</p>
-              <div class="suggest-grid">
-                <button
-                  v-for="item in suggestions"
-                  :key="item.key"
-                  type="button"
-                  class="suggest"
-                  @click="usePrompt(item.prompt)"
-                >
-                  <span class="suggest-type mono">{{ item.type }}</span>
-                  <span class="suggest-title">{{ item.label }}</span>
-                  <span class="suggest-prompt">{{ item.prompt }}</span>
-                  <Icon class="suggest-arrow" name="arrowUp" :size="13" />
-                </button>
-              </div>
-            </div>
+          <div class="hero-quick">
+            <button
+              v-for="prompt in quickAsks"
+              :key="prompt"
+              type="button"
+              class="hero-quick-item"
+              @click="usePrompt(prompt)"
+            >
+              {{ prompt }}
+            </button>
           </div>
 
-          <aside class="hero-side">
-            <div class="campus-block">
-              <div class="hero-rule">
-                <span class="mono">CAMPUS LINKS</span>
-                <span class="rule-line" />
-                <span class="mono">校园入口</span>
-              </div>
-              <div class="campus-grid">
-                <a
-                  v-for="(link, i) in CAMPUS_LINKS"
-                  :key="link.id"
-                  class="campus-link"
-                  :href="link.href"
-                  :title="link.title"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span class="campus-index mono">{{ String(i + 1).padStart(2, '0') }}</span>
-                  <span class="campus-body">
-                    <span class="campus-label">{{ link.label }}</span>
-                    <span class="campus-hint mono">{{ link.hint }}</span>
-                  </span>
-                  <Icon class="campus-arrow" name="external" :size="12" />
-                </a>
-              </div>
-            </div>
-
-            <div class="quick-block">
-              <p class="block-label mono">或者直接问</p>
-              <div class="quick-list">
-                <button v-for="prompt in quickAsks" :key="prompt" type="button" class="quick" @click="usePrompt(prompt)">
-                  {{ prompt }}
-                </button>
-              </div>
-            </div>
-          </aside>
-        </div>
-
-        <div class="hero-links">
-          <RouterLink class="hero-link" :to="{ name: 'atlas' }">
-            <Icon name="atlas" :size="15" />
-            <span>去星野看知识的分片</span>
-            <Icon name="chevronRight" :size="13" />
-          </RouterLink>
-          <RouterLink class="hero-link" :to="{ name: 'archive' }">
-            <Icon name="archive" :size="15" />
-            <span>翻档案室</span>
-            <Icon name="chevronRight" :size="13" />
-          </RouterLink>
+          <p class="hero-campus">
+            <span class="hero-campus-label">校园入口</span>
+            <a
+              v-for="link in CAMPUS_LINKS"
+              :key="link.id"
+              :href="link.href"
+              :title="link.title"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {{ link.label }}
+            </a>
+          </p>
         </div>
       </div>
 
@@ -413,7 +313,7 @@ onBeforeUnmount(() => {
             :key="turn.key"
             :turn="turn"
             :index="turn.index"
-            :is-current="Boolean(turn.live)"
+            :is-current="turn.key === live.targetKey"
             :run="live"
             @regenerate="handleRegenerate"
             @refill="handleRefill"
@@ -477,14 +377,30 @@ onBeforeUnmount(() => {
 /* 抬头直接挂在 .inquiry 下，不像其他页面有 .view-inner 包裹，这里补回同样的安全边距。 */
 .inquiry-head {
   flex: 0 0 auto;
+  align-items: center;
   width: 100%;
   max-width: var(--maxw);
   margin-inline: auto;
-  padding: 22px var(--gutter) 16px;
+  padding: 18px var(--gutter) 14px;
 }
 
-.inquiry-head {
-  flex: 0 0 auto;
+.head-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.ledger-toggle { flex: none; min-width: 36px; min-height: 36px; }
+
+.head-seal {
+  flex: none;
+  width: 72px;
+  height: auto;
+}
+
+:global([data-theme='night'] .head-seal) {
+  filter: brightness(1.8);
 }
 
 .head-main {
@@ -502,17 +418,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 44vw;
-}
-
-.head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.badge {
-  font-size: 11px;
-  color: var(--ink-3);
 }
 
 .thread-scroll {
@@ -585,28 +490,6 @@ onBeforeUnmount(() => {
   background: var(--line);
 }
 
-.hero-emblem {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  margin: 0;
-}
-
-.hero-seal {
-  width: 64px;
-  height: auto;
-  opacity: 0.96;
-}
-
-.hero-emblem figcaption {
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  color: var(--ink-4);
-  white-space: nowrap;
-}
-
 .hero-title {
   display: flex;
   align-items: baseline;
@@ -673,6 +556,8 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
+  overflow: hidden;
+  border-radius: var(--r-md);
   background: var(--line);
   border: 1px solid var(--line);
 }
@@ -759,6 +644,16 @@ onBeforeUnmount(() => {
   align-items: start;
 }
 
+.hero-title { margin-top:24px; }
+.hero-cn { font-size:clamp(58px,6.8vw,86px); }
+.hero-lede { max-width:48ch; font-size:15px; line-height:1.9; }
+.hero-side { background:var(--surface-2); border-radius:12px; }
+.campus-grid { border:0; }
+.campus-link { padding-inline:0; }
+.campus-link:hover { background:transparent; }
+.quick { font-size:13px; }
+.hero-side .quick { font-size:13px; }
+
 .hero-main {
   min-width: 0;
 }
@@ -767,7 +662,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 26px;
-  padding-top: 6px;
+  padding: 22px;
 }
 
 .hero-side .hero-rule {
@@ -785,7 +680,7 @@ onBeforeUnmount(() => {
 .campus-grid {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line);
+  border: 0;
 }
 
 .campus-link {
@@ -1058,12 +953,12 @@ onBeforeUnmount(() => {
     display: none;
   }
 
-  .hero-seal {
-    width: 48px;
+  .head-brand {
+    gap: 14px;
   }
 
-  .hero-emblem figcaption {
-    display: none;
+  .head-seal {
+    width: 60px;
   }
 
   .campus-grid {
@@ -1081,11 +976,6 @@ onBeforeUnmount(() => {
     font-size: 18px;
   }
 
-  .ledger-label {
-    font-size: 11px;
-    letter-spacing: 0.02em;
-  }
-
   .dock {
     padding: 4px 12px 12px;
   }
@@ -1097,6 +987,352 @@ onBeforeUnmount(() => {
   .head-title {
     max-width: 46vw;
     font-size: 15px;
+  }
+
+  .hero-side { padding:18px; }
+}
+
+/* ------------------------------------------------------------
+   空态 v2：一列提问 + 一列辅助入口。
+   去掉三层品牌、英文副标与重复的星野/典藏入口，细线只留两处。
+   ------------------------------------------------------------ */
+
+.head-title {
+  font-size: clamp(19px, 2vw, 23px);
+}
+
+.hero {
+  padding-top: clamp(26px, 4.4vh, 46px);
+}
+
+.hero-spread {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(232px, 292px);
+  gap: clamp(30px, 4.4vw, 72px);
+  align-items: start;
+}
+
+.hero-main {
+  max-width: var(--reading-w);
+}
+
+.hero .hero-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: clamp(32px, 4.2vw, 50px);
+  font-weight: 500;
+  letter-spacing: -0.012em;
+  line-height: 1.26;
+}
+
+.hero .hero-lede {
+  margin: 18px 0 0;
+  max-width: 44ch;
+  color: var(--ink-2);
+  font-size: var(--text-md);
+  line-height: 1.95;
+}
+
+.hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+}
+
+.hero-meta .dot {
+  opacity: 0.45;
+}
+
+.hero .block-label {
+  margin: 0 0 12px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+
+.hero .suggest-block {
+  margin-top: clamp(26px, 4vh, 40px);
+}
+
+.hero .suggest-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border: 0;
+}
+
+.hero .suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 15px 16px 17px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  text-align: left;
+  box-shadow: none;
+  transition: border-color var(--t-fast) var(--ease-out),
+    transform var(--t-base) var(--ease-out), box-shadow var(--t-base) var(--ease-out);
+}
+
+.hero .suggest:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card);
+}
+
+.hero .suggest:active {
+  transform: translateY(0);
+  transition-duration: 90ms;
+}
+
+.suggest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hero .suggest-type {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.hero .suggest-arrow {
+  position: static;
+  color: var(--ink-4);
+  opacity: 0.6;
+  transform: rotate(45deg);
+  transition: opacity var(--t-fast), transform var(--t-base) var(--ease-out);
+}
+
+.hero .suggest:hover .suggest-arrow {
+  opacity: 1;
+  transform: rotate(45deg) translate(1px, -1px);
+}
+
+.hero .suggest-title {
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.hero .suggest-prompt {
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+.hero .hero-side {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(22px, 3.2vh, 32px);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.hero .side-block + .side-block {
+  padding-top: clamp(20px, 2.8vh, 28px);
+  border-top: 1px solid var(--line);
+}
+
+.hero .campus-list {
+  display: flex;
+  flex-direction: column;
+  border: 0;
+}
+
+.hero .campus-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+.hero .campus-link + .campus-link {
+  border-top: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+}
+
+.hero .campus-link:hover {
+  background: transparent;
+  color: var(--ink);
+}
+
+.hero .campus-arrow {
+  opacity: 0.34;
+  transition: opacity var(--t-fast), transform var(--t-base) var(--ease-out);
+}
+
+.hero .campus-link:hover .campus-arrow {
+  opacity: 1;
+  transform: translate(1px, -1px);
+}
+
+.hero .quick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.hero .quick {
+  padding: 9px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  transition: color var(--t-fast) var(--ease-out), transform var(--t-base) var(--ease-out);
+}
+
+.hero .quick:hover {
+  padding-left: 0;
+  transform: translateX(3px);
+  background: transparent;
+  color: var(--ink);
+}
+
+@media (max-width: 980px) {
+  .hero-spread {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 34px;
+  }
+
+  .hero .hero-side {
+    gap: 22px;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero .suggest-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero .suggest,
+  .hero .quick,
+  .hero .campus-arrow { transition: none; }
+}
+
+/* ------------------------------------------------------------
+   空态 v3：居中一列，去掉推荐卡片与右侧栏。
+   ------------------------------------------------------------ */
+.thread-scroll {
+  display: flex;
+  flex-direction: column;
+}
+
+.thread {
+  flex: 0 0 auto;
+}
+
+.hero.hero-empty {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  max-width: none;
+  margin: 0;
+  padding: clamp(30px, 8vh, 96px) var(--gutter) clamp(24px, 6vh, 64px);
+}
+
+.hero-center {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.hero-center .hero-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: clamp(34px, 4.4vw, 52px);
+  font-weight: 500;
+  line-height: 1.22;
+  letter-spacing: 0.02em;
+}
+
+.hero-quick {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 20px;
+  max-width: 430px;
+  margin-top: 10px;
+}
+
+.hero-quick-item {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+.hero-quick-item:hover {
+  color: var(--ink);
+}
+
+.hero-campus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px 14px;
+  width: 100%;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-xs);
+  color: var(--ink-4);
+}
+
+.hero-campus a {
+  color: var(--ink-3);
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+.hero-campus a:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 640px) {
+  .hero-center {
+    gap: 14px;
+  }
+
+  .hero-campus {
+    margin-top: 10px;
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .hero-campus-label {
+    display: none;
+  }
+
+  .hero-quick {
+    gap: 8px 18px;
   }
 }
 </style>

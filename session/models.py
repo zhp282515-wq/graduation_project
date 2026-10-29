@@ -41,3 +41,16 @@ class Memory:
     category: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+@dataclass
+class Note:
+    """用户从回答里一键存下的 Markdown 笔记。内容原样保存，不做二次渲染。"""
+
+    id: str
+    user_id: str
+    title: str
+    content: str
+    source_session_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

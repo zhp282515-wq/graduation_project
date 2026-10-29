@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { deleteMemory, listMemories, updateMemory } from '../api/memory'
+import { createMemory, deleteMemory, listMemories, updateMemory } from '../api/memory'
 import { useUiStore } from './ui'
 
 export const useMemoryStore = defineStore('memory', () => {
@@ -13,6 +13,7 @@ export const useMemoryStore = defineStore('memory', () => {
   const draft = ref('')
   const savingId = ref('')
   const removingId = ref('')
+  const creating = ref(false)
 
   const count = computed(() => items.value.length)
 
@@ -67,6 +68,26 @@ export const useMemoryStore = defineStore('memory', () => {
     }
   }
 
+  async function create(content) {
+    const text = String(content || '').trim()
+    if (!text) {
+      ui.notify('记忆内容不能为空', 'warn')
+      return false
+    }
+    creating.value = true
+    try {
+      const created = await createMemory(text)
+      items.value = [created, ...items.value]
+      ui.notify('记忆已添加', 'ok')
+      return true
+    } catch (err) {
+      ui.notify(err?.message || '添加失败', 'err')
+      return false
+    } finally {
+      creating.value = false
+    }
+  }
+
   async function remove(memory) {
     removingId.value = memory.id
     try {
@@ -82,7 +103,14 @@ export const useMemoryStore = defineStore('memory', () => {
     }
   }
 
+  function reset() {
+    items.value = []; status.value = 'idle'; error.value = ''
+    editingId.value = ''; draft.value = ''; savingId.value = ''; removingId.value = ''
+    creating.value = false
+  }
+
   return {
+    reset,
     items,
     status,
     error,
@@ -90,11 +118,13 @@ export const useMemoryStore = defineStore('memory', () => {
     draft,
     savingId,
     removingId,
+    creating,
     count,
     fetchMemories,
     beginEdit,
     cancelEdit,
     save,
+    create,
     remove,
   }
 })

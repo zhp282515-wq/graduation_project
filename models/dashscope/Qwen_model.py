@@ -24,6 +24,9 @@ def _to_api_message(message: ChatMessage) -> dict[str, Any]:
         "content": message.content,
     }
 
+    if message.role == "assistant" and message.reasoning is not None:
+        result["reasoning_content"] = message.reasoning
+
     if message.tool_calls:
         tool_calls = []
         for tool_call in message.tool_calls:
@@ -44,6 +47,7 @@ def _to_api_message(message: ChatMessage) -> dict[str, Any]:
 
 
 class DashScopeProvider(BaseProvider):
+    provider_id = "dashscope"
     def __init__(
             self,
             model: str,

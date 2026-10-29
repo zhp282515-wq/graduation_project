@@ -133,13 +133,16 @@ const LABEL = { info: '提示', ok: '完成', warn: '注意', err: '错误' }
 
 .toast-leave-active {
   position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 @media (max-width: 900px) {
   .toast-stack {
     left: 14px;
     right: 14px;
-    bottom: 76px;
+    bottom: calc(var(--rail-h, 58px) + 18px + env(safe-area-inset-bottom, 0px));
     width: auto;
   }
 }

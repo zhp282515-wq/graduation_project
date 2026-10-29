@@ -1,43 +1,37 @@
 <script setup>
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '../../stores/auth'
 import { useUiStore } from '../../stores/ui'
-import { useConversationStore } from '../../stores/conversations'
 import Icon from '../ui/Icon.vue'
-import sealUrl from '../../assets/school-seal.svg'
 
+const auth = useAuthStore()
+const router = useRouter()
 const ui = useUiStore()
-
-function openLedgerFromRail() {
-  if (ui.ledgerPinned) {
-    if (window.innerWidth >= 1100) {
-      document.querySelector('.ledger--inline input[type="search"]')?.focus()
-      return
-    }
-    ui.openLedger(true, true)
-    return
-  }
-  ui.openLedger(!ui.ledgerOpen)
+async function logout() {
+  try { await auth.logout(); router.replace('/login') }
+  catch (error) { ui.notify(error.message || '退出未完成，请重试', 'err') }
 }
-const conversation = useConversationStore()
+
 const route = useRoute()
 
-const items = [
+const items = computed(() => [
   { mode: 'inquiry', label: '问学', latin: 'Inquiry', icon: 'inquiry', to: '/inquiry', index: '01' },
   { mode: 'archive', label: '典藏', latin: 'Archive', icon: 'archive', to: '/archive', index: '02' },
-  { mode: 'memory', label: '记忆', latin: 'Memory', icon: 'memory', to: '/memory', index: '03' },
-  { mode: 'atlas', label: '星野', latin: 'Atlas', icon: 'atlas', to: '/atlas', index: '04' },
-]
+  { mode: 'atlas', label: '星野', latin: 'Atlas', icon: 'atlas', to: '/atlas', index: '03' },
+  ...(auth.isAdmin ? [
+    { mode: 'search', label: '检索', latin: 'Search', icon: 'search', to: '/admin/search', index: '04' },
+    { mode: 'users', label: '账号', latin: 'Users', icon: 'users', to: '/admin/users', index: '05' },
+  ] : []),
+])
 
 const currentMode = computed(() => route.meta?.mode || 'inquiry')
-const historyCount = computed(() => conversation.sessions.length)
 </script>
 
 <template>
   <nav class="rail" aria-label="主导航">
-    <RouterLink to="/inquiry" class="seal" aria-label="星野台，返回问学">
-      <img class="seal-img" :src="sealUrl" alt="江西师范大学校徽" width="52" height="43" />
-      <span class="seal-caption serif" aria-hidden="true">星野台</span>
+    <RouterLink to="/inquiry" class="rail-brand" aria-label="星野台，返回问学">
+      <span class="rail-wordmark serif" aria-hidden="true">星野台</span>
     </RouterLink>
 
     <ul class="rail-nav">
@@ -48,26 +42,15 @@ const historyCount = computed(() => conversation.sessions.length)
           :class="{ 'is-active': currentMode === item.mode }"
           :aria-current="currentMode === item.mode ? 'page' : undefined"
         >
-          <span class="rail-index mono">{{ item.index }}</span>
           <Icon :name="item.icon" :size="18" />
           <span class="rail-label">{{ item.label }}</span>
-          <span class="rail-latin">{{ item.latin }}</span>
         </RouterLink>
       </li>
     </ul>
 
     <div class="rail-foot">
-      <button
-        type="button"
-        class="rail-tool"
-        :aria-expanded="ui.ledgerOpen"
-        aria-controls="session-ledger"
-        @click="openLedgerFromRail"
-      >
-        <Icon name="message" :size="17" />
-        <span class="tool-label">会话</span>
-        <span v-if="historyCount" class="tool-count mono">{{ historyCount }}</span>
-      </button>
+      <RouterLink :to="auth.user?.must_change_password ? '/password' : '/settings'" class="rail-tool" :class="{ 'is-active': currentMode === 'settings' }" :aria-current="currentMode === 'settings' ? 'page' : undefined" :title="auth.user?.username + ' · 设置'" aria-label="设置"><Icon name="settings" :size="17" /><span class="tool-label">设置</span></RouterLink>
+      <button type="button" class="rail-tool" @click="logout" aria-label="退出登录"><Icon name="logout" :size="17" /><span class="tool-label">退出</span></button>
       <button
         type="button"
         class="rail-tool rail-tool--theme"
@@ -95,30 +78,19 @@ const historyCount = computed(() => conversation.sessions.length)
   gap: 26px;
   padding: 22px 0 18px;
   border-right: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--surface);
 }
 
-.seal {
+.rail-brand {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 58px;
   text-decoration: none;
 }
 
-.seal-img {
-  display: block;
-  width: 52px;
-  height: auto;
-  opacity: 0.92;
-  transition: opacity var(--t-base) var(--ease-out);
-}
-
-.seal:hover .seal-img {
-  opacity: 1;
-}
-
-.seal-caption {
+.rail-wordmark {
   font-size: 11px;
   letter-spacing: 0.3em;
   color: var(--ink-3);
@@ -146,24 +118,32 @@ const historyCount = computed(() => conversation.sessions.length)
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 10px 2px 8px;
-  border-radius: var(--r-sm);
+  gap: 7px;
+  padding: 12px 2px 10px;
+  border-radius: var(--r-md);
   color: var(--ink-3);
   text-decoration: none;
-  transition: color var(--t-fast), background var(--t-fast);
+  transition: color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.rail-item:active {
+  transform: scale(0.97);
+  transition-duration: 90ms;
 }
 
 .rail-item::before {
   content: "";
   position: absolute;
-  left: -5px;
+  left: -6px;
   top: 50%;
   width: 2px;
-  height: 0;
+  height: 18px;
+  border-radius: var(--r-full);
   background: var(--accent);
-  transform: translateY(-50%);
-  transition: height var(--t-base) var(--ease-out);
+  opacity: 0;
+  transform: translateY(-50%) scaleY(0.4);
+  transition: opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out);
 }
 
 .rail-item:hover {
@@ -177,29 +157,16 @@ const historyCount = computed(() => conversation.sessions.length)
 }
 
 .rail-item.is-active::before {
-  height: 20px;
-}
-
-.rail-index {
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: var(--ink-4);
-}
-
-.rail-item.is-active .rail-index {
-  color: var(--accent);
+  opacity: 1;
+  transform: translateY(-50%) scaleY(1);
 }
 
 .rail-label {
   font-family: var(--font-serif);
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-indent: 0.16em;
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  text-indent: 0.12em;
   line-height: 1;
-}
-
-.rail-latin {
-  display: none;
 }
 
 .rail-foot {
@@ -219,19 +186,30 @@ const historyCount = computed(() => conversation.sessions.length)
   gap: 3px;
   width: 100%;
   padding: 8px 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   color: var(--ink-3);
-  transition: color var(--t-fast), background var(--t-fast);
+  transition: color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out),
+    transform var(--t-fast) var(--ease-out);
+}
+
+.rail-tool.is-active {
+  color: var(--accent);
+  background: var(--surface-2);
 }
 
 .rail-tool:hover {
   color: var(--ink);
-  background: var(--surface-2);
+  background: var(--accent-soft);
+}
+
+.rail-tool:active {
+  transform: scale(0.97);
+  transition-duration: 90ms;
 }
 
 .tool-label {
-  font-size: 11px;
-  letter-spacing: 0.18em;
+  font-size: var(--text-xs);
+  letter-spacing: 0.1em;
 }
 
 .tool-count {
@@ -280,7 +258,7 @@ const historyCount = computed(() => conversation.sessions.length)
     backdrop-filter: blur(14px);
   }
 
-  .seal,
+  .rail-brand,
   .rail-tool--hint,
   .rail-tool--theme {
     display: none;

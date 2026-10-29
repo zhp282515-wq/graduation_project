@@ -9,7 +9,7 @@ from threading import RLock
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, Request, HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
@@ -55,7 +55,22 @@ class ApiTests(unittest.TestCase):
         self.stack.enter_context(patch.object(main, "DashScopeProvider"))
         self.stack.enter_context(patch.object(main, "MemoryExtractor"))
         self.stack.enter_context(patch.object(main, "MemoryJobs", return_value=self.jobs))
-        self.stack.enter_context(patch.dict("os.environ", {"LANGGRAPH_POSTGRES_URI": "mock://tests"}))
+        self.stack.enter_context(patch.dict("os.environ", {"LANGGRAPH_POSTGRES_URI": "mock://tests", "AUTH_JWT_SECRET": "x"*48}))
+        self.stack.enter_context(patch.object(main, "UserRepository"))
+        self.stack.enter_context(patch.object(main, "ModelSettingsRepository"))
+        self.chat_model_resolver = self.stack.enter_context(patch.object(main, "_resolve_chat_model", return_value=(Mock(), {"images": True, "reasoning": True})))
+        previous_overrides = main.app.dependency_overrides.copy()
+        def restore_overrides():
+            main.app.dependency_overrides.clear()
+            main.app.dependency_overrides.update(previous_overrides)
+        self.addCleanup(restore_overrides)
+        # These tests isolate streaming/storage. Real JWT and ACL boundaries live in test_auth.
+        def identity(request: Request):
+            uid = request.headers.get("x-user-id")
+            if not uid and not request.url.path.startswith("/api/knowledge/"):
+                raise HTTPException(401,"测试用户未提供")
+            return {"id": uid or "test-admin", "role": "admin", "_sid": "test-session"}
+        main.app.dependency_overrides[main.get_current_user] = identity
 
     def client(self):
         return self.stack.enter_context(TestClient(main.app))
@@ -83,6 +98,21 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409)
         response = client.delete("/api/sessions/s", headers={"x-user-id": "u"})
         self.assertEqual(response.status_code, 200)
+
+    def test_chat_model_errors_return_before_writing_and_leave_other_operations_available(self):
+        client = self.client()
+        self.chat_model_resolver.side_effect = main.ModelSettingsError("配置不可用")
+        response = client.post('/api/chat', headers={'x-user-id':'u'}, json={'session_id':'s', 'text':'问题'})
+        self.assertEqual((response.status_code, response.json()['detail']), (503, '配置不可用'))
+        self.repo.add_message.assert_not_called()
+        self.repo.list_sessions.return_value = []
+        self.assertEqual(client.get('/api/sessions', headers={'x-user-id':'u'}).status_code, 200)
+        self.chat_model_resolver.side_effect = None
+        self.chat_model_resolver.return_value = (Mock(), {'images': False, 'reasoning': False})
+        response = client.post('/api/chat', headers={'x-user-id':'u'}, json={'session_id':'s', 'text':'问题', 'reasoning': True})
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('深度思考', response.json()['detail'])
+        self.repo.add_message.assert_not_called()
 
     def test_chat_returns_connection_before_background_job(self):
         client = self.client()
@@ -144,6 +174,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["items"][0]["chunk_id"], "stable-uuid")
         self.knowledge.list_chunks.assert_called_once_with("hash", offset=20, limit=20)
+
+    def test_startup_seeds_document_acl_registry_before_first_chat(self):
+        self.kb_repo.count.return_value = 0
+        docs = [{"file_md5":"old-doc","file_name":"旧校园文档"}]
+        self.knowledge.list_documents.return_value = docs
+        self.client()
+        self.kb_repo.upsert_ready_from_milvus.assert_called_once_with(docs)
 
     def test_knowledge_overview_aggregates_registry_counts(self):
         self.kb_repo.count.return_value = 2
@@ -292,7 +329,7 @@ class IngestJobTests(unittest.TestCase):
         self.repo.delete_missing.side_effect = lambda *a: order.append("sync") or 0
         self.repo.mark_ready.side_effect = lambda *a, **k: order.append("ready")
         with ThreadPoolExecutor(2) as pool:
-            syncing = pool.submit(main.sync_knowledge, self.service, self.repo)
+            syncing = pool.submit(main.sync_knowledge, service=self.service, repo=self.repo)
             self.assertTrue(scanning.wait(2))
             job = pool.submit(self.run_job)
             try:

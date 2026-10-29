@@ -15,7 +15,7 @@ from agent.summarizer import Summarizer
 class AgentRuntime:
     def __init__(
         self,
-        model: BaseProvider,
+        model: BaseProvider | None,
         tools: list[BaseTool],
         prompts: str | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
@@ -52,6 +52,8 @@ class AgentRuntime:
             cancel_event=None,
             history: Callable[[], list[dict[str, Any]]] | None = None,
             context_revision: int = 0,
+            principal: dict | None = None,
+            model: BaseProvider | None = None,
     ) -> Iterator[dict[str, Any]]:
         effective_max_turns = max_turns if max_turns is not None else self.default_max_turns
         recursion_limit = effective_max_turns * 2 + 6
@@ -73,11 +75,7 @@ class AgentRuntime:
         if not values and history is not None:
             agent_input["messages"] = [ChatMessage.model_validate(m) for m in history()]
 
-        yield from self.graph.stream(
-            agent_input,
-            config=config,
-            stream_mode="custom"
-        )
+        yield from self.graph.stream(agent_input, config=config, context={"principal": principal, "model": model}, stream_mode="custom")
 
     def delete_thread(self, session_id: str) -> None:
         """删除该会话在 LangGraph 里的全部 checkpoint。"""

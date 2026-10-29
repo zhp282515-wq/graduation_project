@@ -138,7 +138,7 @@
   max-width: 100%;
   margin: 1em 0 1.15em;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-sm);
+  border-radius: 12px;
   background: var(--code-bg);
   overflow: hidden;
 }
@@ -151,6 +151,7 @@
   min-height: 44px;
   padding: 4px 8px 4px 16px;
   border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
 }
 
 .md .code-lang {
@@ -257,7 +258,7 @@
 .hljs-regexp,
 .hljs-addition,
 .hljs-attribute {
-  color: #2f6a4a;
+  color: #75543c;
 }
 
 .hljs-number,

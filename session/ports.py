@@ -1,7 +1,7 @@
 from typing import Any, Protocol, Iterator
 from collections.abc import Callable
 
-from session.models import Memory, Message, Session
+from session.models import Memory, Message, Note, Session
 
 
 class SessionRepository(Protocol):
@@ -32,6 +32,17 @@ class SessionRepository(Protocol):
     def update_memory(self, user_id: str, memory_id: str, content: str) -> Memory | None: ...
 
     def delete_memory(self, user_id: str, memory_id: str) -> bool: ...
+
+    def create_note(self, user_id: str, title: str, content: str,
+                    source_session_id: str | None = None) -> Note: ...
+
+    def list_notes(self, user_id: str) -> list[Note]: ...
+
+    def get_note(self, user_id: str, note_id: str) -> Note | None: ...
+
+    def update_note(self, user_id: str, note_id: str, *, title: str, content: str) -> Note | None: ...
+
+    def delete_note(self, user_id: str, note_id: str) -> bool: ...
 
     def delete_session(self, user_id: str, session_id: str) -> bool: ...
 
@@ -68,6 +79,7 @@ class AgentPort(Protocol):
         cancel_event: Any = None,
         history: Callable[[], list[dict[str, Any]]] | None = None,
         context_revision: int = 0,
+        model: Any = None,
     ) -> Iterator[dict[str, Any]]: ...
 
     def delete_thread(self, session_id: str) -> None: ...

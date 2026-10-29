@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '../../stores/auth'
 import { useConversationStore } from '../../stores/conversations'
 import { useLibraryStore } from '../../stores/library'
 import { useUiStore } from '../../stores/ui'
@@ -9,6 +10,7 @@ import { sessionTitle } from '../../utils/history'
 import { CAMPUS_LINKS } from '../../config/campusLinks'
 import Icon from '../ui/Icon.vue'
 
+const auth = useAuthStore()
 const ui = useUiStore()
 const conversation = useConversationStore()
 const library = useLibraryStore()
@@ -34,7 +36,7 @@ const staticCommands = computed(() => [
     id: 'go-atlas',
     group: '空间',
     label: '去星野看知识分片',
-    hint: '四 · ATLAS',
+    hint: '三 · ATLAS',
     icon: 'atlas',
     run: () => router.push('/atlas'),
   },
@@ -50,9 +52,17 @@ const staticCommands = computed(() => [
     id: 'go-memory',
     group: '空间',
     label: '查看长期记忆',
-    hint: '三 · MEMORY',
+    hint: '设置 · 长期记忆',
     icon: 'memory',
     run: () => router.push('/memory'),
+  },
+  {
+    id: 'go-settings',
+    group: '设置',
+    label: '打开设置',
+    hint: '长期记忆与密码',
+    icon: 'settings',
+    run: () => router.push('/settings'),
   },
   {
     id: 'toggle-theme',
@@ -73,6 +83,10 @@ const staticCommands = computed(() => [
       await library.runSync()
     },
   },
+  ...(auth.isAdmin ? [
+    { id: 'admin-users', group: '管理', label: '管理用户账号', hint: '管理员', icon: 'users', run: () => router.push('/admin/users') },
+    { id: 'admin-search', group: '管理', label: '独立知识检索', hint: '管理员', icon: 'search', run: () => router.push('/admin/search') },
+  ] : []),
   ...CAMPUS_LINKS.map((link) => ({
     id: `campus-${link.id}`,
     group: '校园入口',
@@ -85,7 +99,7 @@ const staticCommands = computed(() => [
 
 const commands = computed(() => {
   const needle = keyword.value.trim().toLowerCase()
-  const list = staticCommands.value.filter((item) =>
+  const list = staticCommands.value.filter((item) => (item.id !== 'sync-kb' || auth.isAdmin)).filter((item) =>
     !needle || `${item.label} ${item.hint} ${item.group}`.toLowerCase().includes(needle),
   )
   const sessions = conversation.sortedSessions
@@ -151,7 +165,7 @@ function onKeydown(event) {
 
 <template>
   <Teleport to="body">
-    <Transition name="fade">
+    <Transition name="pop">
       <div v-if="ui.paletteOpen" class="palette-layer" @click.self="close">
         <div
           class="palette"
@@ -214,17 +228,24 @@ function onKeydown(event) {
   justify-content: center;
   align-items: flex-start;
   padding: min(14vh, 140px) 18px 18px;
-  background: color-mix(in srgb, var(--bg-deep) 58%, transparent);
-  backdrop-filter: blur(5px);
+  background: var(--scrim);
+  backdrop-filter: blur(4px) saturate(0.96);
+  -webkit-backdrop-filter: blur(4px) saturate(0.96);
 }
 
 .palette {
   width: min(620px, 100%);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sheet);
   overflow: hidden;
+  transition: border-color var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
+}
+
+.palette:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-sheet), var(--focus-ring);
 }
 
 .palette-input {

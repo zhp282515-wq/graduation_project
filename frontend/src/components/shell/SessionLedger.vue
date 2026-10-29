@@ -1,23 +1,30 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useConversationStore } from '../../stores/conversations'
+import { useNotesStore } from '../../stores/notes'
 import { useUiStore } from '../../stores/ui'
 import { confirm } from '../../composables/confirm'
 import { dateBucket, relativeTime, sessionTimestamp } from '../../utils/format'
 import { sessionTitle } from '../../utils/history'
 import Icon from '../ui/Icon.vue'
 
-const props = defineProps({
-  inline: { type: Boolean, default: false },
-})
+const props = defineProps({ inline: { type: Boolean, default: false } })
 const ui = useUiStore()
 const conversation = useConversationStore()
+const notes = useNotesStore()
+const route = useRoute()
 const router = useRouter()
 
+const tab = ref('sessions')
 const keyword = ref('')
+const renamingId = ref('')
+const renameDraft = ref('')
 const listRef = ref(null)
-const cursor = ref(0)
+const searchRef = ref(null)
+const ledgerRef = ref(null)
+const cursor = ref(-1)
+let previousFocus = null
 
 const filtered = computed(() => {
   const needle = keyword.value.trim().toLowerCase()
@@ -41,22 +48,56 @@ const groups = computed(() => {
 
 const flatSessions = computed(() => groups.value.flatMap((group) => group.items))
 
+const filteredNotes = computed(() => {
+  const needle = keyword.value.trim().toLowerCase()
+  const list = notes.sorted
+  if (!needle) return list
+  return list.filter((note) => {
+    const title = (note.title || '').toLowerCase()
+    return title.includes(needle) || (note.content || '').toLowerCase().includes(needle)
+  })
+})
+
+const activeNoteId = computed(() => String(route.params.noteId || ''))
+const searchHint = computed(() => (tab.value === 'notes' ? '搜索笔记标题或正文' : '按标题搜索会话'))
+
+watch(
+  () => route.name,
+  (name) => {
+    if (name === 'notes') tab.value = 'notes'
+  },
+  { immediate: true },
+)
+
+watch(tab, (next) => {
+  keyword.value = ''
+  cursor.value = -1
+  if (next === 'notes' && notes.status === 'idle') notes.fetchNotes()
+})
+
 watch(
   () => ui.ledgerOpen,
   async (open) => {
-    if (!open) return
-    cursor.value = 0
+    if (props.inline) return
+    if (!open) {
+      previousFocus?.focus?.()
+      previousFocus = null
+      return
+    }
+    previousFocus = document.activeElement
+    cursor.value = -1
     if (conversation.sessionsStatus === 'idle') conversation.fetchSessions()
     await nextTick()
+    searchRef.value?.focus()
   },
 )
 
 watch(keyword, () => {
-  cursor.value = 0
+  cursor.value = -1
 })
 
 function openLedgerFor(session) {
-  ui.openLedger(false)
+  if (!props.inline) ui.openLedger(false)
   if (conversation.activeId === session.id) {
     ui.markVisited(session.id)
     return
@@ -64,10 +105,58 @@ function openLedgerFor(session) {
   router.push(`/inquiry/${session.id}`)
 }
 
+function openNote(note) {
+  if (!props.inline) ui.openLedger(false)
+  router.push(`/notes/${note.id}`)
+}
+
+function startRename(note) {
+  renamingId.value = note.id
+  renameDraft.value = note.title
+  nextTick(() => {
+    const input = ledgerRef.value?.querySelector('.rename-input')
+    input?.focus()
+    input?.select()
+  })
+}
+
+async function commitRename(note) {
+  if (renamingId.value !== note.id) return
+  const title = renameDraft.value.trim()
+  renamingId.value = ''
+  if (!title || title === note.title) return
+  try {
+    await notes.rename(note.id, title)
+  } catch (err) {
+    ui.notify(err?.message || '重命名失败', 'error')
+  }
+}
+
+async function removeNote(note) {
+  const ok = await confirm({
+    title: `删除「${note.title}」？`,
+    body: '这条笔记会从账号里永久删除，下载过的 .md 文件不受影响。',
+    confirmText: '删除笔记',
+    danger: true,
+  })
+  if (!ok) return
+  await notes.remove(note.id)
+  if (activeNoteId.value === note.id) {
+    const next = notes.sorted[0]
+    router.replace(next ? `/notes/${next.id}` : '/notes')
+  }
+}
+
 function startNew() {
-  ui.openLedger(false)
+  if (!props.inline) ui.openLedger(false)
   conversation.startNew()
   router.push('/inquiry')
+}
+
+async function collapse() {
+  ui.ledgerExpanded = false
+  await nextTick()
+  document.querySelector('#ledger-toggle')?.focus()
 }
 
 async function remove(session) {
@@ -85,7 +174,21 @@ async function remove(session) {
 }
 
 function onKeydown(event) {
-  if (!ui.ledgerOpen) return
+  if ((!props.inline && !ui.ledgerOpen) || event.defaultPrevented) return
+  if (!props.inline && event.key === 'Tab' && ledgerRef.value?.contains(document.activeElement)) {
+    const controls = [...ledgerRef.value.querySelectorAll('button:not(:disabled), input:not(:disabled), [tabindex="0"]')]
+    if (controls.length && event.shiftKey && document.activeElement === controls[0]) {
+      event.preventDefault()
+      controls[controls.length - 1].focus()
+    } else if (controls.length && !event.shiftKey && document.activeElement === controls[controls.length - 1]) {
+      event.preventDefault()
+      controls[0].focus()
+    }
+    return
+  }
+  if (event.target.closest?.('input, textarea, select, button, [contenteditable="true"]')) return
+  if (props.inline && !listRef.value?.contains(event.target)) return
+  if (tab.value !== 'sessions') return
   const total = flatSessions.value.length
   if (!total) return
   if (event.key === 'ArrowDown') {
@@ -94,7 +197,7 @@ function onKeydown(event) {
     scrollToCursor()
   } else if (event.key === 'ArrowUp') {
     event.preventDefault()
-    cursor.value = (cursor.value - 1 + total) % total
+    cursor.value = cursor.value <= 0 ? total - 1 : cursor.value - 1
     scrollToCursor()
   } else if (event.key === 'Enter') {
     event.preventDefault()
@@ -107,14 +210,16 @@ async function scrollToCursor() {
   await nextTick()
   const node = listRef.value?.querySelector('[data-cursor="true"]')
   node?.scrollIntoView({ block: 'nearest' })
+  node?.focus({ preventScroll: true })
 }
 
 watch(
-  () => ui.ledgerOpen,
+  () => props.inline || ui.ledgerOpen,
   (open) => {
     if (open) window.addEventListener('keydown', onKeydown)
     else window.removeEventListener('keydown', onKeydown)
   },
+  { immediate: true },
 )
 
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
@@ -125,64 +230,124 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     <Transition name="fade">
       <div v-if="!props.inline && ui.ledgerOpen" class="scrim" @click="ui.openLedger(false)" />
     </Transition>
-    <Transition :name="props.inline ? 'inline' : 'sheet'">
+    <Transition name="ledger-slide">
       <aside
+        ref="ledgerRef"
         v-if="props.inline || ui.ledgerOpen"
         id="session-ledger"
         class="ledger"
-        :class="props.inline ? 'ledger--inline' : 'sheet'"
+        :class="{ 'ledger--inline': props.inline }"
         :role="props.inline ? 'complementary' : 'dialog'"
         :aria-modal="props.inline ? undefined : 'true'"
         aria-label="会话档案"
       >
-        <header class="ledger-head">
-          <div>
-            <p class="eyebrow">会话档案 · SESSIONS</p>
-            <h2 class="serif">所有提问都在这里</h2>
-          </div>
-          <div class="ledger-actions">
-            <button
-              type="button"
-              class="icon-btn"
-              :class="{ 'is-on': props.inline }"
-              :aria-pressed="props.inline"
-              :title="props.inline ? '取消常驻' : '常驻为左侧栏'"
-              :aria-label="props.inline ? '取消常驻会话档案' : '把会话档案常驻为左侧栏'"
-              @click="ui.toggleLedgerPinned()"
-            >
-              <Icon name="pin" :size="15" />
-            </button>
-            <button
-              v-if="!props.inline"
-              type="button"
-              class="icon-btn"
-              aria-label="关闭会话档案"
-              @click="ui.openLedger(false)"
-            >
-              <Icon name="close" :size="16" />
-            </button>
-          </div>
-        </header>
-
         <div class="ledger-tools">
-          <label class="search-box">
-            <Icon name="search" :size="15" />
-            <input
-              v-model="keyword"
-              type="search"
-              placeholder="按标题搜索会话"
-              aria-label="搜索会话"
-              autocomplete="off"
-            />
-            <span v-if="filtered.length" class="mono result-count">{{ filtered.length }}</span>
-          </label>
-          <button type="button" class="btn btn--solid btn--sm" @click="startNew">
+          <div class="ledger-tabs" role="tablist" aria-label="档案类型">
+            <button
+              type="button"
+              role="tab"
+              class="ledger-tab"
+              :class="{ 'is-on': tab === 'sessions' }"
+              :aria-selected="tab === 'sessions'"
+              @click="tab = 'sessions'"
+            >
+              会话
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="ledger-tab"
+              :class="{ 'is-on': tab === 'notes' }"
+              :aria-selected="tab === 'notes'"
+              @click="tab = 'notes'"
+            >
+              笔记
+              <span v-if="notes.sorted.length" class="mono tab-count">{{ notes.sorted.length }}</span>
+            </button>
+          </div>
+          <div class="ledger-tools-head">
+            <label class="search-box">
+              <Icon name="search" :size="15" />
+              <input
+                ref="searchRef"
+                v-model="keyword"
+                type="search"
+                :placeholder="searchHint"
+                :aria-label="searchHint"
+                autocomplete="off"
+              />
+              <span v-if="tab === 'sessions' && filtered.length" class="mono result-count">{{ filtered.length }}</span>
+              <span v-else-if="tab === 'notes' && filteredNotes.length" class="mono result-count">{{ filteredNotes.length }}</span>
+            </label>
+            <button
+              type="button"
+              class="icon-btn ledger-collapse"
+              :aria-label="props.inline ? '折叠会话栏' : '关闭会话档案'"
+              :title="props.inline ? '折叠会话栏' : '关闭会话档案'"
+              @click="props.inline ? collapse() : ui.openLedger(false)"
+            >
+              <Icon :name="props.inline ? 'chevronLeft' : 'close'" :size="16" />
+            </button>
+          </div>
+          <button v-if="tab === 'sessions'" type="button" class="btn btn--solid btn--sm ledger-new" @click="startNew">
             <Icon name="plus" :size="13" />
             新会话
           </button>
         </div>
 
-        <div ref="listRef" class="ledger-body">
+        <div v-if="tab === 'notes'" ref="listRef" class="ledger-body">
+          <p v-if="notes.status === 'loading' && !notes.sorted.length" class="ledger-hint mono">正在读取笔记…</p>
+          <div v-else-if="notes.status === 'error'" class="empty">
+            <p class="empty-title">笔记取不回来</p>
+            <p class="empty-body">{{ notes.error }}</p>
+            <button type="button" class="btn btn--sm" @click="notes.fetchNotes()">重试</button>
+          </div>
+          <div v-else-if="!filteredNotes.length" class="empty">
+            <p class="empty-title">{{ keyword ? '没有匹配的笔记' : '还没有笔记' }}</p>
+            <p class="empty-body">
+              {{ keyword ? '换一个关键词，或清空搜索。' : '在回答下方点「保存为笔记」，就会收进这里。' }}
+            </p>
+            <button v-if="keyword" type="button" class="btn btn--sm" @click="keyword = ''">清空搜索</button>
+          </div>
+          <ul v-else class="session-list">
+            <li v-for="note in filteredNotes" :key="note.id">
+              <div v-if="renamingId === note.id" class="session-row note-row is-renaming">
+                <input
+                  v-model="renameDraft"
+                  class="rename-input"
+                  aria-label="重命名笔记"
+                  @keydown.enter.prevent="commitRename(note)"
+                  @keydown.esc.prevent="renamingId = ''"
+                  @blur="commitRename(note)"
+                />
+              </div>
+              <div
+                v-else
+                class="session-row note-row"
+                :class="{ 'is-active': note.id === activeNoteId }"
+                role="button"
+                tabindex="0"
+                @click="openNote(note)"
+                @keydown.enter.prevent="openNote(note)"
+              >
+                <span class="row-main">
+                  <span class="row-title">{{ note.title }}</span>
+                  <span class="row-meta mono">{{ relativeTime(note.updated_at) }}</span>
+                </span>
+                <span class="row-actions">
+                  <button type="button" class="icon-btn icon-btn--sm" aria-label="重命名" title="重命名" @click.stop="startRename(note)">
+                    <Icon name="edit" :size="13" />
+                  </button>
+                  <button type="button" class="icon-btn icon-btn--sm" aria-label="删除笔记" title="删除笔记" @click.stop="removeNote(note)">
+                    <Icon name="trash" :size="13" />
+                  </button>
+                </span>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div v-else ref="listRef" class="ledger-body" @pointermove="cursor = -1">
           <p v-if="conversation.sessionsStatus === 'loading'" class="ledger-hint mono">正在读取档案…</p>
           <div v-else-if="conversation.sessionsStatus === 'error'" class="empty">
             <p class="empty-title">档案柜打不开</p>
@@ -220,7 +385,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                       <span class="row-meta mono">
                         <template v-if="conversation.isRunning(session.id)">正在生成 · </template>
                         {{ relativeTime(sessionTimestamp(session)) }}
-                        <template v-if="session.status === 'running'"> · 生成中</template>
+
                       </span>
                     </span>
                     <span class="row-actions">
@@ -242,12 +407,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </div>
 
         <footer class="ledger-foot">
-          <span class="mono">共 {{ conversation.sessions.length }} 条会话</span>
-          <button type="button" class="theme-switch mono" @click="ui.toggleTheme()">
-            <Icon :name="ui.isNight ? 'sun' : 'moon'" :size="12" />
-            {{ ui.isNight ? '切换到纸本' : '切换到星夜' }}
-          </button>
-          <span class="mono hint">{{ props.inline ? '↑↓ 选择 · ⏎ 打开' : '↑↓ 选择 · ⏎ 打开 · esc 关闭' }}</span>
+          <span v-if="tab === 'notes'" class="mono">共 {{ notes.sorted.length }} 条笔记</span>
+          <span v-else class="mono">共 {{ conversation.sessions.length }} 条会话</span>
+          <span v-if="tab === 'notes'" class="mono hint">⏎ 打开 · 双击标题重命名</span>
+          <span v-else class="mono hint">{{ props.inline ? '↑↓ 选择 · ⏎ 打开' : '↑↓ 选择 · ⏎ 打开 · esc 关闭' }}</span>
         </footer>
       </aside>
     </Transition>
@@ -256,82 +419,131 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <style scoped>
 .ledger {
-  width: min(440px, 100vw);
-}
-
-.ledger-actions {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: var(--z-sheet);
+  width: min(440px, calc(100vw - 32px));
   display: flex;
-  align-items: center;
-  gap: 2px;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--line-strong);
+  box-shadow: 8px 0 32px rgb(0 0 0 / 0.14);
 }
 
-/* 常驻模式：成为 shell 的第二列，不再浮层化。 */
 .ledger--inline {
   position: relative;
   inset: auto;
-  width: 100%;
+  width: 312px;
+  min-width: 0;
   height: 100%;
-  max-height: none;
-  border-radius: 0;
-  border-right: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--surface);
   box-shadow: none;
+  transition: opacity 240ms var(--ease-out), transform 320ms var(--ease-out);
+}
+
+:global(.ledger-slot.is-collapsed) .ledger--inline {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+
+.ledger--inline .ledger-tabs {
   display: flex;
-  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
 }
 
-.ledger--inline .ledger-head {
-  padding: 22px 18px 14px;
+.ledger-tab {
+  flex: 1 1 0;
+  padding: 6px 10px;
+  border-radius: calc(var(--r-sm) - 2px);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
 }
 
-.ledger--inline .ledger-head h2 {
-  font-size: 18px;
+.ledger-tab:hover {
+  color: var(--ink);
 }
 
-.ledger-actions .icon-btn.is-on {
-  color: var(--accent);
-  background: var(--accent-soft);
+.ledger-tab.is-on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-soft, 0 1px 2px rgb(0 0 0 / 0.05));
 }
 
-.ledger--inline .ledger-tools {
-  padding: 12px 18px;
+.tab-count {
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--ink-4);
 }
 
-.ledger--inline .ledger-body {
-  flex: 1;
-  min-height: 0;
+.note-row {
+  align-items: center;
 }
 
-.ledger--inline .ledger-foot {
-  padding: 12px 18px;
+.rename-input {
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid var(--accent);
+  background: none;
+  font-size: var(--text-base);
+  color: var(--ink);
 }
 
-.ledger-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 24px 24px 16px;
-  border-bottom: 1px solid var(--line);
+.rename-input:focus {
+  outline: none;
 }
 
-.ledger-head h2 {
-  margin-top: 8px;
-  font-size: var(--text-lg);
-  font-weight: 500;
-  letter-spacing: 0.05em;
+.ledger-tools { padding: 18px 18px 12px; }
+.ledger--inline .ledger-foot { padding: 12px 18px; }
+.ledger--inline .ledger-foot .hint { display: none; }
+
+.ledger-slide-enter-active,
+.ledger-slide-leave-active {
+  transition: transform var(--t-slow) var(--ease-out), opacity var(--t-base) var(--ease-out);
+}
+
+.ledger-slide-enter-from,
+.ledger-slide-leave-to {
+  transform: translateX(-24px);
+  opacity: 0;
 }
 
 .ledger-tools {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 24px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 18px 24px 14px;
   border-bottom: 1px solid var(--line);
 }
 
-.ledger-tools .search-box {
+.ledger-tools-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ledger-new {
+  justify-content: center;
+}
+
+.ledger-collapse {
+  flex: 0 0 auto;
+  color: var(--ink-4);
+}
+
+.ledger-collapse:hover {
+  color: var(--ink);
+}
+
+.ledger-tools-head .search-box {
   flex: 1;
+  min-width: 0;
 }
 
 .result-count {
@@ -341,6 +553,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .ledger-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 6px 14px 24px;
   overscroll-behavior: contain;
@@ -373,6 +586,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .session-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -384,11 +598,28 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .session-row:hover,
 .session-row[data-cursor='true'] {
-  background: var(--surface-2);
+  background: var(--accent-soft);
 }
 
 .session-row.is-active {
   background: var(--accent-soft);
+}
+
+.session-row.is-active .row-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.session-row.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  transform: translateY(-50%);
 }
 
 .row-mark {
@@ -453,6 +684,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .session-row:hover .row-actions,
+.session-row:focus-within .row-actions,
 .session-row[data-cursor='true'] .row-actions {
   opacity: 1;
 }
@@ -498,6 +730,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 
 @media (max-width: 640px) {
+  .ledger-foot {
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
   .ledger-foot .hint {
     display: none;
   }
@@ -505,5 +741,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   .row-actions {
     opacity: 1;
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ledger-slide-enter-active, .ledger-slide-leave-active, .ledger--inline { transition: none; }
 }
 </style>

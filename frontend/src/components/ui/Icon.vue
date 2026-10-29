@@ -1,9 +1,15 @@
 <script setup>
+import { computed } from 'vue'
 /**
  * 单线条图标。统一 24×24、stroke 1.4、currentColor，
  * 让图标和宋体标题、等宽数字处在同一种"铅笔稿"的质感里。
  */
 const paths = {
+  arrowRight: 'M4 12h15 M13 6l6 6-6 6',
+  chevronUp: 'M6 15l6-6 6 6',
+  settings: 'M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z M19 12c0-.5-.05-1-.15-1.46l1.57-1.23-1.5-2.6-1.84.74a7.1 7.1 0 0 0-2.53-1.46l-.28-1.97h-3l-.28 1.97a7.1 7.1 0 0 0-2.53 1.46l-1.84-.74-1.5 2.6 1.57 1.23a7.4 7.4 0 0 0 0 2.92L5.12 14.7l1.5 2.6 1.84-.74a7.1 7.1 0 0 0 2.53 1.46l.28 1.97h3l.28-1.97a7.1 7.1 0 0 0 2.53-1.46l1.84.74 1.5-2.6-1.57-1.23c.1-.46.15-.96.15-1.46Z',
+  users: 'M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M18 4a4 4 0 0 1 0 7 M22 20v-2a4 4 0 0 0-3-3.8',
+  logout: 'M9 4H4v16h5 M10 12h11 M16 7l5 5-5 5',
   inquiry: 'M4 5.5h16v10.2H9.6L4.8 19.4V5.5Z M8 10h8',
   archive: 'M4 7h16 M5 7v12h14V7 M9 7V4.6h6V7 M9.5 11h5 M9.5 14.4h5',
   memory: 'M12 4a4 4 0 0 0-4 4v1.2a3.6 3.6 0 0 0-1 6.6V18a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2.2a3.6 3.6 0 0 0-1-6.6V8a4 4 0 0 0-4-4Z M12 4v16 M8.6 9.4h2 M13.4 13h2',
@@ -43,6 +49,9 @@ const paths = {
   image: 'M4.4 5.4h15.2v13.2H4.4z M4.4 15.2l4.4-4.2 4 3.8 3-2.8 3.8 3.4 M15.6 9.1h.01',
   paperclip: 'M17.6 10.6l-6.2 6.2a3.6 3.6 0 0 1-5.1-5.1l7.3-7.3a2.6 2.6 0 0 1 3.7 3.7l-7.2 7.2a1.5 1.5 0 0 1-2.1-2.1l6.2-6.2',
   menu: 'M4.6 7h14.8 M4.6 12h14.8 M4.6 17h14.8',
+  panelLeft: 'M4 5.5h16v13H4z M9 5.5v13',
+  expand: 'M9 4.5H4.5V9 M15 4.5h4.5V9 M19.5 15v4.5H15 M9 19.5H4.5V15',
+  collapse: 'M4.5 9H9V4.5 M15 4.5V9h4.5 M19.5 15H15v4.5 M9 19.5V15H4.5',
 }
 
 const props = defineProps({
@@ -52,7 +61,7 @@ const props = defineProps({
   fill: { type: Boolean, default: false },
 })
 
-const d = paths[props.name] || ''
+const d = computed(() => paths[props.name] || '')
 </script>
 
 <template>

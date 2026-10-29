@@ -338,15 +338,15 @@ defineExpose({
 .composer {
   position: relative;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
+  border-radius: 14px;
   background: var(--surface);
-  box-shadow: var(--shadow-float);
+  box-shadow: none;
   transition: border-color var(--t-base), box-shadow var(--t-base);
 }
 
 .composer.is-focused {
-  border-color: var(--ink-3);
-  box-shadow: 0 22px 60px -36px rgba(28, 24, 19, 0.55);
+  border-color: var(--accent);
+  box-shadow: 0 12px 30px -24px rgba(28, 58, 39, 0.45);
 }
 
 .composer.is-dragging {
@@ -427,7 +427,7 @@ textarea {
   background: transparent;
   resize: none;
   outline: none;
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-size: var(--text-md);
   line-height: 1.75;
   letter-spacing: 0.015em;

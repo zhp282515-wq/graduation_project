@@ -166,14 +166,14 @@ function close() {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--surface-2);
-  max-height: 220px;
+  max-height: min(56vh, 480px);
   overflow-y: auto;
 }
 
 .nav-row {
   display: flex;
   gap: 10px;
-  padding: 7px 8px;
+  padding: 6px 8px;
   border-radius: var(--r-xs);
   text-align: left;
   color: var(--ink-2);

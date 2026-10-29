@@ -12,11 +12,17 @@ const state = reactive({
   confirmText: '确认',
   cancelText: '取消',
   danger: false,
+  requireText: '',
+  typed: '',
   resolve: null,
 })
 
 export function useConfirm() {
-  return { state: readonly(state), confirm, settle }
+  return { state: readonly(state), confirm, settle, setTyped }
+}
+
+export function setTyped(value) {
+  state.typed = String(value ?? '')
 }
 
 export function confirm(options = {}) {
@@ -25,11 +31,15 @@ export function confirm(options = {}) {
     if (state.resolve) state.resolve(false)
     state.open = true
     state.title = options.title || '请确认'
-    state.body = options.body || ''
+    state.body = options.body || options.message || ''
     state.detail = options.detail || ''
     state.confirmText = options.confirmText || '确认'
     state.cancelText = options.cancelText || '取消'
-    state.danger = Boolean(options.danger)
+    // 两种写法都认：danger: true 或 tone: 'danger'。
+    state.danger = Boolean(options.danger) || options.tone === 'danger'
+    // 高危操作（例如注销账号）要求把名字打一遍，才算二次确认。
+    state.requireText = options.requireText || ''
+    state.typed = ''
     state.resolve = resolve
   })
 }

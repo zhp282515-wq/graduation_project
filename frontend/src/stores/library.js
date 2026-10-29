@@ -31,6 +31,7 @@ export function stageLabel(status, stage) {
 
 export const useLibraryStore = defineStore('library', () => {
   const ui = useUiStore()
+  let generation = 0
 
   const query = ref('')
   const type = ref('')
@@ -86,6 +87,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   async function fetchDocuments({ silent = false } = {}) {
+    const epoch = generation
     if (!silent) status.value = 'loading'
     error.value = ''
     try {
@@ -99,6 +101,7 @@ export const useLibraryStore = defineStore('library', () => {
         }),
         overview.value ? null : fetchOverview(),
       ])
+      if (epoch !== generation) return
       items.value = Array.isArray(data?.items) ? data.items : []
       total.value = Number(data?.total) || 0
       facets.value = data?.facets || facets.value
@@ -109,6 +112,7 @@ export const useLibraryStore = defineStore('library', () => {
         await fetchDocuments({ silent: true })
       }
     } catch (err) {
+      if (epoch !== generation) return
       status.value = 'error'
       error.value = err?.message || '文档列表加载失败'
       if (!silent) ui.notify(error.value, 'err')
@@ -249,9 +253,11 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   async function uploadFiles(files, { title = '' } = {}) {
+    const epoch = generation
     const list = Array.from(files || [])
     if (!list.length) return
     for (const file of list) {
+      if (epoch !== generation) return
       uploadSeed += 1
       const entryId = `upload-${uploadSeed}`
       const entry = reactive({
@@ -273,6 +279,7 @@ export const useLibraryStore = defineStore('library', () => {
             entry.progress = Math.round(ratio * 100)
           },
         })
+        if (epoch !== generation) return
         const md5 = result?.file_md5
         if (!md5) throw new Error('后端没有返回文档指纹')
         entry.md5 = md5
@@ -282,6 +289,7 @@ export const useLibraryStore = defineStore('library', () => {
         await fetchDocuments({ silent: true })
         pollJob(md5, entryId)
       } catch (err) {
+        if (epoch !== generation) return
         entry.state = 'failed'
         entry.error = err?.message || '上传失败'
         ui.notify(entry.error, 'err')
@@ -370,6 +378,16 @@ export const useLibraryStore = defineStore('library', () => {
     for (const md5 of [...pollers.keys()]) stopPolling(md5)
   }
 
+  function reset() {
+    generation++
+    dispose()
+    query.value = ''; type.value = ''; page.value = 1
+    items.value = []; total.value = 0; facets.value = {}; overview.value = null
+    status.value = 'idle'; error.value = ''; syncing.value = false; lastSyncedAt.value = 0
+    activeMd5.value = ''; document.value = null; chunks.value = []; chunkTotal.value = 0
+    chunkStatus.value = 'idle'; chunkError.value = ''; uploads.value = []
+  }
+
   return {
     query,
     type,
@@ -416,5 +434,6 @@ export const useLibraryStore = defineStore('library', () => {
     runSync,
     focusSource,
     dispose,
+    reset,
   }
 })

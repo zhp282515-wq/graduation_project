@@ -1,4 +1,4 @@
-﻿/* ============================================================
+/* ============================================================
    星野台 · 设计令牌
    两套材质共用一套尺度与语义：paper（纸本，默认）与 night（星夜）。
    组件只允许消费这里的变量，颜色与字号不允许散落在组件里。
@@ -28,23 +28,28 @@
 
   /* 尺度与留白 */
   --rail-w: 78px;
+  --ledger-w: 312px;
+  --nav-w: 196px;
   --gutter: clamp(18px, 3vw, 44px);
   --maxw: 1280px;
   --reading-w: 720px;
 
   /* 圆角 */
-  --r-xs: 3px;
-  --r-sm: 6px;
-  --r-md: 10px;
+  --r-xs: 5px;
+  --r-sm: 9px;
+  --r-md: 12px;
   --r-lg: 16px;
+  --r-xl: 22px;
   --r-full: 999px;
 
   /* 动效 */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --t-fast: 130ms;
   --t-base: 220ms;
   --t-slow: 480ms;
+  --t-page: 460ms;
 
   /* 层级 */
   --z-sticky: 20;
@@ -54,41 +59,44 @@
   --z-confirm: 95;
 
   /* 纸张材质 */
-  --bg: #f2eee4;
-  --bg-deep: #eae4d7;
-  --surface: #fbf8f1;
-  --surface-2: #f6f1e6;
-  --surface-3: #ece5d6;
-  --surface-glass: rgba(251, 248, 241, 0.82);
-  --ink: #1c1813;
-  --ink-2: #4b4339;
-  --ink-3: #615749;
-  --ink-4: #6b6153;
-  --line: rgba(28, 24, 19, 0.13);
-  --line-strong: rgba(28, 24, 19, 0.26);
-  --accent: #a3352a;
-  --accent-hover: #8d2b21;
-  --accent-ink: #fff8ee;
-  --accent-soft: rgba(163, 53, 42, 0.09);
-  --accent-line: rgba(163, 53, 42, 0.32);
-  --ok: #37624a;
-  --ok-soft: rgba(55, 98, 74, 0.1);
-  --warn: #85642a;
-  --warn-soft: rgba(133, 100, 42, 0.1);
-  --err: #97281f;
-  --err-soft: rgba(151, 40, 31, 0.09);
+  --bg: #faf9f7;
+  --bg-deep: #f2f0ec;
+  --surface: #fffefc;
+  --surface-2: #f5f3ef;
+  --surface-3: #eae7e1;
+  --surface-glass: rgba(255, 254, 252, 0.96);
+  --ink: #1f1e1c;
+  --ink-2: #3f3d39;
+  --ink-3: #5a5852;
+  --ink-4: #6b6963;
+  --line: rgba(38, 34, 28, 0.13);
+  --line-strong: rgba(38, 34, 28, 0.27);
+  --accent: #2c2b28;
+  --accent-hover: #131210;
+  --accent-ink: #fffefc;
+  --accent-soft: rgba(44, 43, 40, 0.07);
+  --accent-line: rgba(44, 43, 40, 0.34);
+  --ok: #3d6249;
+  --ok-soft: rgba(61, 98, 73, 0.1);
+  --warn: #80602a;
+  --warn-soft: rgba(128, 96, 42, 0.1);
+  --err: #8f2b22;
+  --err-soft: rgba(143, 43, 34, 0.09);
+  --shadow-card: 0 1px 2px rgba(38, 28, 16, 0.04), 0 10px 26px -24px rgba(38, 28, 16, 0.4);
   --shadow-sheet: 0 28px 64px -46px rgba(38, 28, 16, 0.5), 0 1px 0 rgba(255, 255, 255, 0.45) inset;
   --shadow-float: 0 12px 34px -28px rgba(38, 28, 16, 0.45);
   --shadow-soft: 0 6px 20px -18px rgba(38, 28, 16, 0.4);
-  --grain-opacity: 0.05;
+  --scrim: rgba(26, 24, 20, 0.5);
+  --focus-ring: 0 0 0 3px rgba(44, 43, 40, 0.16);
+  --grain-opacity: 0;
   --grain-blend: multiply;
   --chart-line: rgba(28, 24, 19, 0.22);
   --scroll-thumb: rgba(28, 24, 19, 0.2);
-  --code-bg: #efe8da;
-  --code-ink: #3c2f24;
-  --star-a: #a3352a;
-  --star-b: #2f5d63;
-  --star-c: #7a5a2e;
+  --code-bg: #f3f3f3;
+  --code-ink: #292929;
+  --star-a: #ba6a4d;
+  --star-b: #527b68;
+  --star-c: #a47a3d;
 
   color-scheme: light;
 }
@@ -96,23 +104,23 @@
 /* 星野页会临时把整站带入夜色（data-force-night），离开即恢复用户自己的选择。 */
 :root[data-theme="night"],
 :root[data-force-night] {
-  --bg: #07070b;
-  --bg-deep: #040407;
-  --surface: rgba(20, 21, 31, 0.78);
-  --surface-2: rgba(27, 28, 41, 0.72);
-  --surface-3: rgba(38, 40, 56, 0.7);
-  --surface-glass: rgba(12, 13, 20, 0.72);
-  --ink: #ece6d8;
-  --ink-2: #b6afa1;
-  --ink-3: #9c9587;
-  --ink-4: #9b9484;
-  --line: rgba(236, 230, 216, 0.13);
-  --line-strong: rgba(236, 230, 216, 0.28);
-  --accent: #e2684c;
-  --accent-hover: #ef7d61;
-  --accent-ink: #140a06;
-  --accent-soft: rgba(226, 104, 76, 0.12);
-  --accent-line: rgba(226, 104, 76, 0.38);
+  --bg: #111212;
+  --bg-deep: #090a0a;
+  --surface: #1b1c1c;
+  --surface-2: #252626;
+  --surface-3: #303131;
+  --surface-glass: rgba(20, 21, 21, 0.96);
+  --ink: #f1f1ef;
+  --ink-2: #d1d2d0;
+  --ink-3: #b8bab8;
+  --ink-4: #aaadaa;
+  --line: rgba(240, 240, 235, 0.14);
+  --line-strong: rgba(240, 240, 235, 0.3);
+  --accent: #d8ded8;
+  --accent-hover: #f0f3ef;
+  --accent-ink: #181a18;
+  --accent-soft: rgba(218, 224, 217, 0.12);
+  --accent-line: rgba(218, 224, 217, 0.4);
   --ok: #7fb894;
   --ok-soft: rgba(127, 184, 148, 0.12);
   --warn: #d8b36a;
@@ -127,10 +135,32 @@
   --chart-line: rgba(236, 230, 216, 0.2);
   --scroll-thumb: rgba(236, 230, 216, 0.18);
   --code-bg: rgba(255, 255, 255, 0.045);
-  --code-ink: #dfd8c8;
+  --code-ink: #e2e3df;
   --star-a: #e2684c;
   --star-b: #6fa8b0;
   --star-c: #d3a24e;
 
   color-scheme: dark;
+}
+
+/* Public entrance: fixed paper/ink art direction, independent of the workspace theme. */
+:root {
+  --entry-paper: #fafafa;
+  --entry-sheet: #ffffff;
+  --entry-ink: #202020;
+  --entry-muted: #5c5c5c;
+  --entry-placeholder: #5c5c5c;
+  --entry-red: #303030;
+  --entry-red-hover: #111111;
+  --entry-on-red: #ffffff;
+  --entry-line: rgba(32, 32, 32, .16);
+  --entry-rule: rgba(32, 32, 32, .36);
+  --entry-selection: #e2e2e2;
+  --entry-shadow: rgba(32, 32, 32, .3);
+  --entry-night: #151616;
+  --entry-night-text: #f2f2ef;
+  --entry-night-muted: #c2c4c1;
+  --entry-orbit: rgba(220, 224, 218, .23);
+  --entry-graph-line: #999999;
+  --entry-star-accent: #dfaa79;
 }

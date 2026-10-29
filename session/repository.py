@@ -5,7 +5,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from session.models import Memory, Message, Session
+from session.models import Memory, Message, Note, Session
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -40,6 +40,18 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_user ON memories (user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS saved_notes (
+    id                TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    content           TEXT NOT NULL DEFAULT '',
+    source_session_id TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_notes_user ON saved_notes (user_id, updated_at DESC);
 """
 
 # 迁移单独放：必须在建索引之前跑，且不能带 NOT NULL DEFAULT
@@ -93,6 +105,21 @@ def _to_memory(row: dict[str, Any]) -> Memory:
         user_id=row["user_id"],
         content=row["content"],
         category=row["category"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+_NOTE_COLUMNS = "id, user_id, title, content, source_session_id, created_at, updated_at"
+
+
+def _to_note(row: dict[str, Any]) -> Note:
+    return Note(
+        id=row["id"],
+        user_id=row["user_id"],
+        title=row["title"],
+        content=row["content"],
+        source_session_id=row.get("source_session_id"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -322,6 +349,66 @@ class PostgresSessionRepository:
             row = cur.fetchone()
         self._conn.commit()
         return _to_memory(row)
+
+    # ---------- 已保存的笔记 ----------
+    def create_note(self, user_id: str, title: str, content: str, source_session_id: str | None = None) -> Note:
+        note_id = uuid4().hex
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"""
+                INSERT INTO saved_notes (id, user_id, title, content, source_session_id)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING {_NOTE_COLUMNS}
+                """,
+                (note_id, user_id, title, content, source_session_id),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        return _to_note(row)
+
+    def list_notes(self, user_id: str) -> list[Note]:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"""
+                SELECT {_NOTE_COLUMNS}
+                FROM saved_notes
+                WHERE user_id = %s
+                ORDER BY updated_at DESC
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
+        return [_to_note(row) for row in rows]
+
+    def get_note(self, user_id: str, note_id: str) -> Note | None:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT {_NOTE_COLUMNS} FROM saved_notes WHERE id = %s AND user_id = %s",
+                (note_id, user_id),
+            )
+            row = cur.fetchone()
+        return _to_note(row) if row else None
+
+    def update_note(self, user_id: str, note_id: str, *, title: str, content: str) -> Note | None:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"""
+                UPDATE saved_notes SET title = %s, content = %s, updated_at = now()
+                WHERE id = %s AND user_id = %s
+                RETURNING {_NOTE_COLUMNS}
+                """,
+                (title, content, note_id, user_id),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        return _to_note(row) if row else None
+
+    def delete_note(self, user_id: str, note_id: str) -> bool:
+        with self._conn.cursor() as cur:
+            cur.execute("DELETE FROM saved_notes WHERE id = %s AND user_id = %s", (note_id, user_id))
+            deleted = cur.rowcount > 0
+        self._conn.commit()
+        return deleted
 
     def list_memories(self, user_id: str) -> list[Memory]:
         with self._conn.cursor(row_factory=dict_row) as cur:

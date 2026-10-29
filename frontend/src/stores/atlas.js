@@ -1,10 +1,11 @@
 ﻿import { defineStore } from 'pinia'
+import { useAuthStore } from './auth'
 import { computed, ref, shallowRef } from 'vue'
 import { getStarMap, getStarMapEdges, getStarMapPoints } from '../api/knowledgeBase'
 import { useUiStore } from './ui'
 
 /** 星群配色：与纸本 / 星夜两套主题都能共存的低饱和色相。 */
-export const DOC_HUES = [212, 168, 38, 288, 8, 122, 248, 322, 190, 62]
+export const DOC_HUES = [156, 38, 188, 22, 112, 205, 48, 174, 8, 90]
 
 const PAGE_SIZE = 400
 
@@ -194,7 +195,7 @@ const showSemanticEdges = ref(false)
   }
 
   function reload() {
-    return load({ force: true })
+    return load({ force: useAuthStore().isAdmin })
   }
 
   function select(id, { focus = false } = {}) {
@@ -241,6 +242,9 @@ const showSemanticEdges = ref(false)
   }
 
   function reset() {
+    clearFilters()
+    hoveredId.value = ''
+    focusRequest.value = null
     status.value = 'idle'
     error.value = ''
     meta.value = null

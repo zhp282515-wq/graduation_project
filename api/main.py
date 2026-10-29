@@ -2,6 +2,7 @@ import hashlib
 import os
 import json
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -11,22 +12,31 @@ from fastapi import (
     HTTPException, Query, Request, UploadFile,
 )
 from fastapi.concurrency import run_in_threadpool
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from auth.routes import get_current_user, require_admin, router as auth_router
+from auth.security import Settings
+from auth.repository import UserRepository
+from auth.policy import ScopedRegistry, ScopedKnowledge, allowed_documents, require_document
+from typing import Literal
 from contextlib import ExitStack, asynccontextmanager
 
 from dotenv import load_dotenv
+
+from models.deepseek import DeepSeekProvider
+
 load_dotenv(override=True)
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from models.base import ChatResponse, ChatMessage
+from models.base import ChatResponse, ChatMessage, DeferredProvider
+from models.settings import ModelSettingsRepository, ModelSettingsError, resolve_model_selection, settings_response, validate_selection
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from session.repository import PostgresSessionRepository
-from session.service import SessionService
+from session.service import ModelCapabilityError, SessionService
 from session.runs import KeyedLocks, SessionBusyError
 from session.memory_jobs import MemoryJobs
 from api.streaming import ChatStreamingResponse
@@ -72,6 +82,10 @@ class ChatRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.auth = Settings.from_env()
+    app.state.starmaps = {}
+    import threading
+    app.state.starmap_lock = threading.RLock()
     dsn = os.getenv("LANGGRAPH_POSTGRES_URI")
     if not dsn:
         raise RuntimeError("缺少 LANGGRAPH_POSTGRES_URI 配置")
@@ -120,6 +134,8 @@ async def lifespan(app: FastAPI):
 
         with pg_pool.connection() as conn:
             PostgresSessionRepository(conn).setup()
+            UserRepository(conn).setup()
+            ModelSettingsRepository(conn).setup()
             kb_repo = KbDocumentRepository(conn)
             kb_repo.setup()
             stalled = kb_repo.reconcile_after_restart()
@@ -130,9 +146,15 @@ async def lifespan(app: FastAPI):
         # 初始化失败不能拖垮整个服务 —— 聊天照常，知识库接口返回 503。
         try:
             kb_service = KnowledgeService()
+            resources.callback(kb_service.close)
+            # ACLs use the SQL registry. Seed historical Milvus documents before
+            # the first chat, rather than requiring a visit to the archive page.
+            with pg_pool.connection() as conn:
+                registry = KbDocumentRepository(conn)
+                if registry.count() == 0:
+                    _bootstrap_registry(registry, kb_service)
             app.state.knowledge = kb_service
             app.state.kb_error = None
-            resources.callback(kb_service.close)
         except Exception as exc:
             logger.exception("知识库服务初始化失败")
             kb_service = None
@@ -144,50 +166,41 @@ async def lifespan(app: FastAPI):
         # 知识星图：知识库的真实分片只读视图，构建在首次访问时触发并落盘缓存。
         app.state.starmap = StarMapBuilder(kb_service) if kb_service else None
         app.state.runtime = AgentRuntime(
-            # model = DashScopeProvider(model="qwen3.8-flash"),
-            model = OpenAIProvider(model="gpt-6-luna"),
+            # Resolve the chat provider for each request, not at startup.
+            model = None,
             tools = [
                 WeatherTool(),
                 WebSearchTool(),
                 AcademicCalendarTool(),
-                KnowledgeSearchTool(kb_service),
+                KnowledgeSearchTool(kb_service, pool=pg_pool),
             ],
             prompts = get_prompt(),
             checkpointer = saver,
-            summary_model = DashScopeProvider(model="qwen3.7-flash"),
+            summary_model = DeferredProvider(lambda: DashScopeProvider(model="qwen3.7-flash")),
         )
         # 记忆抽取用便宜的小模型，与摘要模型共用即可
         app.state.memory_extractor = MemoryExtractor(
-            DashScopeProvider(model="qwen3.7-flash")
+            DeferredProvider(lambda: DashScopeProvider(model="qwen3.7-flash"))
         )
         app.state.memory_jobs = MemoryJobs(pg_pool, app.state.memory_extractor)
         yield
 
 
-def get_current_user(x_user_id: str | None = Header(default=None)) -> dict:
-
-    if not x_user_id:
-        raise HTTPException(
-            status_code = 401,
-            detail = "缺少用户标识"
-        )
-    return {
-        "id": x_user_id
-    }
-
-def get_service(request: Request):
+def get_service(request: Request, user: dict = Depends(get_current_user)):
     pool: ConnectionPool = request.app.state.pg_pool
 
     with pool.connection() as conn:
-        yield SessionService(
+        service = SessionService(
             PostgresSessionRepository(conn),
             request.app.state.runtime,
             runs=request.app.state.runs,
             history_builder=saved_history,
         )
+        service._principal = {key: user[key] for key in ("id", "role", "_sid")}
+        yield service
 
 
-def get_knowledge(request: Request) -> KnowledgeService:
+def get_knowledge(request: Request, user: dict = Depends(get_current_user)) -> KnowledgeService:
     service = getattr(request.app.state, "knowledge", None)
     if service is None:
         raise HTTPException(
@@ -197,12 +210,40 @@ def get_knowledge(request: Request) -> KnowledgeService:
     return service
 
 
-def get_kb_repo(request: Request):
+def get_kb_repo(request: Request, user: dict = Depends(get_current_user)):
     pool: ConnectionPool = request.app.state.pg_pool
     with pool.connection() as conn:
-        yield KbDocumentRepository(conn)
+        yield ScopedRegistry(KbDocumentRepository(conn), user)
 
 app = FastAPI(lifespan=lifespan)
+
+
+class ModelSettingsUpdate(BaseModel):
+    provider: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=200)
+
+
+@app.get('/api/admin/model-settings')
+def get_model_settings(request: Request, user: dict = Depends(require_admin)):
+    try:
+        with request.app.state.pg_pool.connection() as conn:
+            return settings_response(conn)
+    except ModelSettingsError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.put('/api/admin/model-settings')
+def update_model_settings(body: ModelSettingsUpdate, request: Request, user: dict = Depends(require_admin)):
+    try:
+        with request.app.state.pg_pool.connection() as conn, conn.transaction():
+            validate_selection({'provider': body.provider, 'model': body.model})
+            ModelSettingsRepository(conn).set(body.provider, body.model)
+            return settings_response(conn)
+    except ModelSettingsError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+app.include_router(auth_router)
 
 @app.get("/api/sessions")
 async def list_sessions(
@@ -246,6 +287,19 @@ async def delete_session(
     return {"deleted": session_id}
 
 
+def _resolve_chat_model(conn):
+    selection = resolve_model_selection(conn)
+    provider_class = {
+        "deepseek": DeepSeekProvider,
+        "dashscope": DashScopeProvider,
+        "openai": OpenAIProvider,
+    }[selection["provider"]]
+    try:
+        return provider_class(model=selection["model"]), selection
+    except ValueError as exc:
+        raise ModelSettingsError(f"对话模型初始化失败，请管理员检查配置：{exc}") from exc
+
+
 @app.post("/api/chat")
 async def chat(
         req: ChatRequest,
@@ -258,7 +312,7 @@ async def chat(
     abs_images = [(root / p).resolve() for p in req.images]
     # 只允许 data/uploads 下的文件，防止客户端传 ../ 读到任意文件
     for p in abs_images:
-        if not str(p).startswith(str(UPLOAD_DIR.resolve())):
+        if not p.is_relative_to(UPLOAD_DIR.resolve()):
             raise HTTPException(status_code=400, detail=f"非法的图片路径：{p.name}")
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"图片不存在：{p.name}")
@@ -267,6 +321,9 @@ async def chat(
 
     def prepare_run():
         conn = resources.enter_context(request.app.state.pg_pool.connection())
+        for image in abs_images:
+            if not UserRepository(conn).owns_upload(image.name, user["id"]):
+                raise HTTPException(404, "图片不存在或无访问权限")
         service = SessionService(
             PostgresSessionRepository(conn), request.app.state.runtime,
             runs=request.app.state.runs,
@@ -274,7 +331,9 @@ async def chat(
                 request.app.state.memory_jobs.run, uid, text, answer,
             ),
             history_builder=saved_history,
+            model_resolver=lambda: _resolve_chat_model(conn),
         )
+        service._principal = {key: user[key] for key in ("id", "role", "_sid")}
         return service.send_message(
             user["id"],
             req.session_id,
@@ -293,6 +352,12 @@ async def chat(
     except SessionBusyError as exc:
         resources.close()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ModelSettingsError as exc:
+        resources.close()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ModelCapabilityError as exc:
+        resources.close()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         resources.close()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -320,10 +385,15 @@ async def regenerate_message(
     def prepare_run():
         conn = resources.enter_context(request.app.state.pg_pool.connection())
         service = SessionService(PostgresSessionRepository(conn), request.app.state.runtime,
-                                 runs=request.app.state.runs, history_builder=saved_history)
+                                 runs=request.app.state.runs, history_builder=saved_history,
+                                 model_resolver=lambda: _resolve_chat_model(conn))
+        service._principal = {key: user[key] for key in ("id", "role", "_sid")}
         return service.regenerate(user["id"], session_id, message_id)
     try:
         stream = await run_in_threadpool(prepare_run)
+    except ModelSettingsError as exc:
+        resources.close()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (SessionBusyError, LookupError, ValueError) as exc:
         resources.close()
         status = 409 if isinstance(exc, SessionBusyError) else 404 if isinstance(exc, LookupError) else 422
@@ -339,6 +409,7 @@ async def regenerate_message(
 
 @app.post("/api/upload")
 async def upload_image(
+        request: Request,
         file: UploadFile = File(...),
         user: dict = Depends(get_current_user),
 ):
@@ -367,7 +438,16 @@ async def upload_image(
 
     name = f"{uuid.uuid4().hex}{ext}"
     path = UPLOAD_DIR / name
-    path.write_bytes(data)
+    def save_upload():
+        with request.app.state.pg_pool.connection() as conn:
+            with conn.transaction():
+                conn.execute("INSERT INTO upload_owners(name,user_id) VALUES (%s,%s)", (name,user["id"]))
+                path.write_bytes(data)
+    try:
+        await run_in_threadpool(save_upload)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
     # path 给后续 /api/chat 用（服务端再拼成绝对路径），url 给前端 <img>
     return {
@@ -377,13 +457,43 @@ async def upload_image(
     }
 
 
-# 静态托管上传目录，前端可直接用 url 显示
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+@app.get("/uploads/{name}")
+def read_upload(name: str, request: Request, user: dict = Depends(get_current_user)):
+    path = (UPLOAD_DIR / name).resolve()
+    if not path.is_relative_to(UPLOAD_DIR.resolve()) or not path.is_file():
+        raise HTTPException(404, "图片不存在")
+    with request.app.state.pg_pool.connection() as conn:
+        if not UserRepository(conn).owns_upload(name, user["id"]):
+            raise HTTPException(404, "图片不存在或无访问权限")
+    return FileResponse(path, headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 # ---------- 长期记忆 ----------
+class MemoryCreate(BaseModel):
+    content: str
+    category: str | None = None
+
+
 class MemoryUpdate(BaseModel):
     content: str
+
+
+MEMORY_MAX_CHARS = 200
+
+
+@app.post("/api/memories", status_code=201)
+async def create_memory(
+        body: MemoryCreate,
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="内容不能为空")
+    if len(content) > MEMORY_MAX_CHARS:
+        raise HTTPException(status_code=400, detail=f"一条记忆最多 {MEMORY_MAX_CHARS} 字")
+    category = (body.category or "fact").strip() or "fact"
+    return service.add_memory(user["id"], content, category[:32])
 
 
 @app.get("/api/memories")
@@ -404,6 +514,8 @@ async def update_memory(
     content = body.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="内容不能为空")
+    if len(content) > MEMORY_MAX_CHARS:
+        raise HTTPException(status_code=400, detail=f"一条记忆最多 {MEMORY_MAX_CHARS} 字")
     updated = service.update_memory(user["id"], memory_id, content)
     if updated is None:
         raise HTTPException(status_code=404, detail="记忆不存在")
@@ -421,6 +533,83 @@ async def delete_memory(
     return {"deleted": memory_id}
 
 
+
+
+# ---------- 已保存的笔记 ----------
+_NOTE_TITLE_MAX = 200
+_NOTE_BODY_MAX = 400_000
+
+
+class NoteCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=_NOTE_TITLE_MAX)
+    content: str = Field(default="", max_length=_NOTE_BODY_MAX)
+    source_session_id: str | None = None
+
+
+class NoteUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=_NOTE_TITLE_MAX)
+    content: str | None = Field(default=None, max_length=_NOTE_BODY_MAX)
+
+
+@app.get("/api/notes")
+def list_notes(
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    return service.list_notes(user["id"])
+
+
+@app.get("/api/notes/{note_id}")
+def get_note(
+        note_id: str,
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    note = service.get_note(user["id"], note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="笔记不存在")
+    return note
+
+
+@app.post("/api/notes", status_code=201)
+def create_note(
+        body: NoteCreate,
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    title = body.title.strip() or "未命名笔记"
+    return service.create_note(user["id"], title, body.content, body.source_session_id)
+
+
+@app.put("/api/notes/{note_id}")
+def update_note(
+        note_id: str,
+        body: NoteUpdate,
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    note = service.get_note(user["id"], note_id)
+    if note is None:
+        raise HTTPException(status_code=404, detail="笔记不存在")
+    title = (body.title if body.title is not None else note.title).strip() or "未命名笔记"
+    content = body.content if body.content is not None else note.content
+    updated = service.update_note(user["id"], note_id, title=title, content=content)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="笔记不存在")
+    return updated
+
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(
+        note_id: str,
+        user: dict = Depends(get_current_user),
+        service: SessionService = Depends(get_service),
+):
+    if not service.delete_note(user["id"], note_id):
+        raise HTTPException(status_code=404, detail="笔记不存在")
+    return {"deleted": note_id}
+
+
 # ============================================================
 # 知识库管理
 # ============================================================
@@ -432,6 +621,7 @@ def _serialize_doc(row: dict) -> dict:
         "original_name": row.get("original_name"),
         "file_type": row["file_type"],
         "file_size": int(row.get("file_size") or 0),
+        "visibility": row.get("visibility", "admin"),
         "chunk_count": row.get("chunk_count"),
         "status": row["status"],
         "stage": row.get("stage"),
@@ -453,6 +643,7 @@ def _bootstrap_registry(repo: KbDocumentRepository, service: KnowledgeService) -
 
 @app.get("/api/knowledge/overview")
 def knowledge_overview(
+        user: dict = Depends(get_current_user),
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo),
 ):
@@ -470,6 +661,7 @@ def knowledge_overview(
 
 @app.get("/api/knowledge/documents")
 def list_knowledge_documents(
+        user: dict = Depends(get_current_user),
         q: str = "",
         type: str | None = None,
         page: int = Query(1, ge=1),
@@ -500,8 +692,11 @@ def list_knowledge_chunks(
         page_size: int = Query(20, ge=1, le=100),
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo),
+        user: dict = Depends(get_current_user),
 ):
     doc = repo.get(file_md5)
+    if user["role"] != "admin":
+        require_document(doc, user)
     if doc is None:
         milvus_doc = service.get_document(file_md5)
         if milvus_doc is None:
@@ -557,6 +752,7 @@ def get_knowledge_job(
         file_md5: str,
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo),
+        user: dict = Depends(require_admin),
 ):
     doc = repo.get(file_md5)
     if doc is not None:
@@ -580,6 +776,7 @@ def get_knowledge_job(
 
 @app.post("/api/knowledge/sync")
 def sync_knowledge(
+        user: dict = Depends(require_admin),
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo),
 ):
@@ -595,6 +792,7 @@ def delete_knowledge_document(
         file_md5: str,
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo),
+        user: dict = Depends(require_admin),
 ):
     with service.registry_lock:
         doc = repo.get(file_md5)
@@ -621,6 +819,66 @@ def delete_knowledge_document(
         return {"deleted": file_md5, "chunks_deleted": chunks}
 
 
+class VisibilityUpdate(BaseModel):
+    visibility: Literal['public', 'admin']
+
+
+@app.patch('/api/knowledge/documents/{file_md5}/visibility')
+def update_visibility(file_md5: str, body: VisibilityUpdate,
+                      user: dict = Depends(require_admin), repo=Depends(get_kb_repo)):
+    if not repo.get(file_md5):
+        raise HTTPException(404, '文档不存在')
+    repo._conn.execute('UPDATE kb_documents SET visibility=%s,updated_at=now() WHERE file_md5=%s',
+                       (body.visibility,file_md5))
+    return _serialize_doc(repo.get(file_md5))
+
+
+class SearchRequest(BaseModel):
+    query: str
+    mode: Literal['vector', 'hybrid', 'hybrid_rerank'] = 'hybrid_rerank'
+    top_k: int = Field(default=20, ge=1, le=50, strict=True)
+    top_n: int = Field(default=5, ge=1, le=50, strict=True)
+
+    @model_validator(mode='after')
+    def validate_counts(self):
+        if self.top_n > self.top_k:
+            raise ValueError('最终展示条数不能超过召回条数')
+        return self
+
+
+@app.post('/api/admin/knowledge/search')
+def search_knowledge(body: SearchRequest, request: Request,
+                     user: dict = Depends(require_admin), service=Depends(get_knowledge)):
+    started = time.perf_counter()
+    query = body.query.strip()
+    if not query or len(query)>1000:
+        raise HTTPException(422,'请输入1–1000字的检索问题')
+    with request.app.state.pg_pool.connection() as conn:
+        allowed = allowed_documents(conn,user)
+    if allowed:
+        result = service.debug_retriever(query, body.mode, body.top_k, body.top_n,
+                                         expression='file_md5 in '+json.dumps(sorted(allowed)))
+    else:
+        result = {
+            'items': [], 'candidate_file_md5s': [],
+            'score_type': {'vector': 'cosine', 'hybrid': 'rrf', 'hybrid_rerank': 'rerank'}[body.mode],
+            'rerank_status': 'not_run' if body.mode == 'hybrid_rerank' else 'not_requested',
+        }
+    with request.app.state.pg_pool.connection() as conn:
+        current = UserRepository(conn).session_user(user['_sid'],user['id'])
+        if not current or current['role'] != 'admin':
+            raise HTTPException(401,'登录已失效，请重新登录')
+        allowed = allowed_documents(conn,current)
+    return {
+        'items': [r for r in result['items'] if r['source'].get('file_md5') in allowed],
+        'mode': body.mode,
+        'score_type': result['score_type'],
+        'candidate_count': sum(md5 in allowed for md5 in result['candidate_file_md5s']),
+        'elapsed_ms': round((time.perf_counter() - started) * 1000, 1),
+        'rerank_status': result['rerank_status'],
+    }
+
+
 # ============================================================
 # 知识星图
 # ============================================================
@@ -628,40 +886,54 @@ def delete_knowledge_document(
 # 三组接口分开，是因为星图里分片数量远大于文档数量 —— meta（文档/算法元信息）
 # 小，points 需要分页，edges 只在需要时才取。
 
-def get_starmap(request: Request) -> StarMapBuilder:
-    builder = getattr(request.app.state, "starmap", None)
-    if builder is None:
-        raise HTTPException(
-            status_code=503,
-            detail=f"知识星图未就绪：{getattr(request.app.state, 'kb_error', '知识库尚未加载')}",
-        )
-    return builder
+def get_starmap(request: Request, user: dict = Depends(get_current_user)) -> StarMapBuilder:
+    service = get_knowledge(request)
+    with request.app.state.pg_pool.connection() as conn:
+        allowed = allowed_documents(conn, user)
+    key = hashlib.sha256("|".join(sorted(allowed)).encode()).hexdigest()[:24]
+    with request.app.state.starmap_lock:
+        builders = request.app.state.starmaps
+        if key not in builders:
+            if len(builders) >= 4:
+                builders.pop(next(iter(builders)))
+            builders[key] = StarMapBuilder(ScopedKnowledge(service, allowed),
+                cache_dir=Path(__file__).resolve().parent.parent / "data" / "starmap" / key)
+        return builders[key]
 
 
 @app.get("/api/knowledge/starmap")
 def starmap_meta(
+        user: dict = Depends(get_current_user),
         force: bool = False,
         builder: StarMapBuilder = Depends(get_starmap),
 ):
+    if force and user["role"] != "admin":
+        raise HTTPException(403, "仅管理员可以重建星图")
     return builder.meta(force=force)
 
 
 @app.get("/api/knowledge/starmap/points")
 def starmap_points(
+        user: dict = Depends(get_current_user),
         offset: int = Query(0, ge=0),
         limit: int = Query(POINT_PAGE_DEFAULT, ge=1, le=POINT_PAGE_MAX),
         force: bool = False,
         builder: StarMapBuilder = Depends(get_starmap),
 ):
+    if force and user["role"] != "admin":
+        raise HTTPException(403, "仅管理员可以重建星图")
     return builder.points(offset=offset, limit=limit, force=force)
 
 
 @app.get("/api/knowledge/starmap/edges")
 def starmap_edges(
+        user: dict = Depends(get_current_user),
         limit: int = Query(EDGE_MAX, ge=1, le=EDGE_MAX),
         force: bool = False,
         builder: StarMapBuilder = Depends(get_starmap),
 ):
+    if force and user["role"] != "admin":
+        raise HTTPException(403, "仅管理员可以重建星图")
     return builder.edges(limit=limit, force=force)
 
 
@@ -727,6 +999,7 @@ async def upload_knowledge_document(
         title: str | None = Form(None),
         service: KnowledgeService = Depends(get_knowledge),
         repo: KbDocumentRepository = Depends(get_kb_repo, scope="function"),
+        user: dict = Depends(require_admin),
 ):
     original = Path(file.filename or "document")
     suffix = original.suffix.lower()

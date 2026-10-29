@@ -1,0 +1,19 @@
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "models": [{"id": "deepseek-flash", "label": "DeepSeek Flash", "images": true, "reasoning": true}]
+    },
+    {
+      "id": "dashscope",
+      "label": "DashScope",
+      "models": [{"id": "qwen3.8-flash", "label": "Qwen 3.8 Flash", "images": true, "reasoning": true}]
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "models": [{"id": "gpt-6-luna", "label": "GPT-6 Luna", "images": true, "reasoning": true}]
+    }
+  ]
+}

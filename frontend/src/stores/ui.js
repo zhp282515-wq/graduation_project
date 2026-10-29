@@ -3,7 +3,6 @@ import { computed, ref, watch } from 'vue'
 
 const THEME_KEY = 'jxnu.theme'
 const VISITED_KEY = 'jxnu.visited-sessions'
-const LEDGER_PIN_KEY = 'jxnu.ledger.pinned'
 
 function readTheme() {
   try {
@@ -30,21 +29,14 @@ function readVisited() {
   }
 }
 
-function readLedgerPinned() {
-  try {
-    return localStorage.getItem(LEDGER_PIN_KEY) === 'on'
-  } catch {
-    return false
-  }
-}
-
 let toastSeed = 0
 
 export const useUiStore = defineStore('ui', () => {
   const theme = ref(readTheme())
   const mode = ref('inquiry')
   const ledgerOpen = ref(false)
-  const ledgerPinned = ref(readLedgerPinned())
+  const ledgerExpanded = ref(true)
+  const ledgerWide = ref(typeof window !== 'undefined' && window.innerWidth >= 1100)
   const paletteOpen = ref(false)
   const mobileNavOpen = ref(false)
   const toasts = ref([])
@@ -80,23 +72,8 @@ export const useUiStore = defineStore('ui', () => {
     mode.value = next
   }
 
-  function openLedger(value = true, force = false) {
-    if (value && ledgerPinned.value && !force) return
+  function openLedger(value = true) {
     ledgerOpen.value = value
-  }
-
-  function setLedgerPinned(value) {
-    ledgerPinned.value = Boolean(value)
-    if (ledgerPinned.value) ledgerOpen.value = false
-    try {
-      localStorage.setItem(LEDGER_PIN_KEY, ledgerPinned.value ? 'on' : 'off')
-    } catch {
-      /* noop */
-    }
-  }
-
-  function toggleLedgerPinned() {
-    setLedgerPinned(!ledgerPinned.value)
   }
 
   function toggleLedger() {
@@ -151,15 +128,14 @@ export const useUiStore = defineStore('ui', () => {
     isNight,
     mode,
     ledgerOpen,
+    ledgerExpanded,
+    ledgerWide,
     paletteOpen,
     mobileNavOpen,
     toasts,
     visited,
     setTheme,
     toggleTheme,
-    ledgerPinned,
-    setLedgerPinned,
-    toggleLedgerPinned,
     setMode,
     openLedger,
     toggleLedger,

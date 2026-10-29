@@ -1,11 +1,15 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { renderMarkdown } from '../../utils/markdown'
 import { copyText } from '../../utils/clipboard'
 import { formatDuration, formatNumber, plainText } from '../../utils/format'
 import { sourceKindLabel } from '../../utils/citations'
+import { useNotesStore } from '../../stores/notes'
+import { useUiStore } from '../../stores/ui'
 import RunTrace from './RunTrace.vue'
 import SourceStrip from './SourceStrip.vue'
+import BaseSheet from '../ui/BaseSheet.vue'
 import Icon from '../ui/Icon.vue'
 
 const props = defineProps({
@@ -22,9 +26,16 @@ const props = defineProps({
 
 const emit = defineEmits(['regenerate', 'open-source', 'open-sources', 'refill'])
 
+const notes = useNotesStore()
+const ui = useUiStore()
+const router = useRouter()
 const reasoningOpen = ref(false)
 const copied = ref(false)
 const copyTimers = new Map()
+const saveOpen = ref(false)
+const saveTitle = ref('')
+const saveBusy = ref(false)
+const savedNoteId = ref('')
 
 onBeforeUnmount(() => {
   copyTimers.forEach((timer) => window.clearTimeout(timer))
@@ -41,7 +52,7 @@ function resetCopyState(key, reset, delay = 1600) {
 const hasText = computed(() => Boolean(props.answer.text && props.answer.text.trim()))
 const html = computed(() => renderMarkdown(props.answer.text))
 const streaming = computed(() => Boolean(props.answer.streaming))
-const failed = computed(() => props.live && (props.phase === 'failed' || props.phase === 'aborted'))
+const failed = computed(() => props.phase === 'failed' || props.phase === 'aborted')
 const awaiting = computed(() => props.live && !hasText.value && !failed.value)
 const reasoningChars = computed(() => props.reasoning.trim().length)
 const showTrace = computed(() => props.steps.length > 0)
@@ -58,6 +69,45 @@ async function copyAnswer() {
     resetCopyState('answer', () => (copied.value = false))
   } catch {
     copied.value = false
+  }
+}
+
+/** 从正文里挑一句像标题的话：第一个标题，其次第一句非空文本。 */
+function suggestTitle() {
+  const text = props.answer.text || ''
+  const heading = text.match(/^#{1,3}\s+(.+)$/m)
+  const line = heading?.[1] || text.split('\n').find((row) => row.trim() && !row.trim().startsWith('![')) || ''
+  const clean = line
+    .replace(/[*_`>#\[\]()]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return (clean || `回答 ${props.index}`).slice(0, 40)
+}
+
+function openSave() {
+  if (!hasText.value) return
+  saveTitle.value = suggestTitle()
+  saveOpen.value = true
+}
+
+async function confirmSave() {
+  if (saveBusy.value) return
+  saveBusy.value = true
+  try {
+    const note = await notes.create({
+      title: saveTitle.value.trim() || suggestTitle(),
+      content: props.answer.text || '',
+    })
+    savedNoteId.value = note.id
+    saveOpen.value = false
+    ui.notify('已存进左侧笔记', 'success', {
+      action: { label: '打开', run: () => router.push(`/notes/${note.id}`) },
+      duration: 5200,
+    })
+  } catch (err) {
+    ui.notify(err?.message || '保存失败', 'error')
+  } finally {
+    saveBusy.value = false
   }
 }
 
@@ -142,6 +192,16 @@ async function onBodyClick(event) {
           {{ copied ? '已复制' : '复制' }}
         </button>
         <button
+          type="button"
+          class="btn btn--quiet btn--sm"
+          :disabled="!hasText || streaming"
+          :title="savedNoteId ? '再存一份' : '把这条回答原样存成 Markdown 笔记'"
+          @click="openSave"
+        >
+          <Icon :name="savedNoteId ? 'check' : 'file'" :size="12" />
+          {{ savedNoteId ? '已保存' : '保存为笔记' }}
+        </button>
+        <button
           v-if="!streaming"
           type="button"
           class="btn btn--quiet btn--sm"
@@ -169,6 +229,31 @@ async function onBodyClick(event) {
         <span v-if="sources.length">{{ sourceKindLabel(sources[0]) }}</span>
       </div>
     </div>
+    <BaseSheet
+      :open="saveOpen"
+      title="保存为笔记"
+      subtitle="正文按原始 Markdown 存下，之后可以继续编辑、下载。"
+      eyebrow="笔记"
+      :width="460"
+      @update:open="saveOpen = $event"
+    >
+      <label class="save-field">
+        <span class="save-label">标题</span>
+        <input
+          v-model="saveTitle"
+          class="save-input"
+          maxlength="200"
+          autocomplete="off"
+          @keydown.enter.prevent="confirmSave"
+        />
+      </label>
+      <template #foot>
+        <button type="button" class="btn btn--quiet btn--sm" @click="saveOpen = false">取消</button>
+        <button type="button" class="btn btn--solid btn--sm" :disabled="saveBusy" @click="confirmSave">
+          {{ saveBusy ? '保存中…' : '保存' }}
+        </button>
+      </template>
+    </BaseSheet>
   </article>
 </template>
 
@@ -176,6 +261,33 @@ async function onBodyClick(event) {
 .answer {
   position: relative;
   min-width: 0;
+}
+
+.save-field {
+  display: grid;
+  gap: 8px;
+}
+
+.save-label {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  color: var(--ink-4);
+}
+
+.save-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-size: var(--text-base);
+  color: var(--ink);
+}
+
+.save-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .reasoning {

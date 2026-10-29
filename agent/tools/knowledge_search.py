@@ -11,7 +11,8 @@ _UNSET = object()
 
 
 class KnowledgeSearchTool(BaseTool):
-    def __init__(self, service=_UNSET):
+    def __init__(self, service=_UNSET, *, pool=None):
+        self.pool = pool
         # 不传参数保持脚本用法；显式 None 表示服务不可用，禁止重试初始化。
         self.service = KnowledgeService() if service is _UNSET else service
 
@@ -52,7 +53,28 @@ class KnowledgeSearchTool(BaseTool):
             raise ToolError("未提供检索内容")
 
         start = time.perf_counter()
-        results = self.service.rerank_retriever(query)
+        from auth.policy import principal, allowed_documents
+        user = principal.get()
+        if not user or self.pool is None:
+            raise ToolError("知识库检索需要有效的用户身份")
+        with self.pool.connection() as conn:
+            from auth.repository import UserRepository
+            current = UserRepository(conn).session_user(user["_sid"], user["id"])
+            if not current:
+                raise ToolError("登录已失效，请重新登录")
+            allowed = allowed_documents(conn, current)
+        if not allowed:
+            return ToolResult(content="没有可访问的知识库文档")
+        import json
+        expression = "file_md5 in " + json.dumps(sorted(allowed))
+        results = self.service.rerank_retriever(query, expression=expression)
+        # Recheck the SQL registry before any text reaches the model or SSE source events.
+        with self.pool.connection() as conn:
+            current = UserRepository(conn).session_user(user["_sid"], user["id"])
+            if not current:
+                raise ToolError("登录已失效，请重新登录")
+            allowed = allowed_documents(conn, current)
+        results = [r for r in results if r["source"].get("file_md5") in allowed]
         if not results:
             return ToolResult(content="知识库中没有找到相关内容")
 

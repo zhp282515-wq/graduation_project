@@ -13,6 +13,9 @@ const ui = useUiStore()
 const atlas = useAtlasStore()
 
 const stage = ref(null)
+const atlasRoot = ref(null)
+const immersive = ref(false)
+let nativeFullscreen = false
 const engineReady = ref(false)
 // 移动端一进来就展开左面板会盖住整张星图，按宽度决定初始状态。
 const panelsOpen = ref(typeof window === 'undefined' ? true : window.innerWidth >= 900)
@@ -224,8 +227,8 @@ function focusOffset() {
     // 手机上详情是底部抽屉（约 62vh），把星体抬到上半部的正中。
     return { x: 0, y: -Math.round(vh * 0.2) }
   }
-  const railW = 78
-  const leftEdge = railW + (panelsOpen.value ? LEFT_PANEL_W + PANEL_GAP : 0)
+  const railW = immersive.value ? 0 : 78
+  const leftEdge = railW + (panelsOpen.value && !immersive.value ? LEFT_PANEL_W + PANEL_GAP : 0)
   const rightEdge = vw - (atlas.selectedId ? DETAIL_W + PANEL_GAP : 0)
   const freeCenter = (leftEdge + rightEdge) / 2
   return { x: Math.round(freeCenter - (railW + (vw - railW) / 2)), y: 0 }
@@ -302,7 +305,7 @@ function onCanvasHover(payload) {
 
 function toggleLabels() {
   labelsOn.value = !labelsOn.value
-  engine?.setLabelsVisible(labelsOn.value)
+  engine?.setLabelsVisible(labelsOn.value && !immersive.value)
   try {
     window.localStorage.setItem(LABEL_KEY, labelsOn.value ? 'on' : 'off')
   } catch {
@@ -321,6 +324,45 @@ function toggleAutoRotate() {
   }
   ui.notify(autoRotate.value ? '自动观测已开启' : '自动观测已暂停', 'info')
 }
+
+async function leaveImmersive() {
+  immersive.value = false
+  if (document.fullscreenElement === atlasRoot.value) {
+    try {
+      await document.exitFullscreen()
+    } catch {
+      /* 浏览器已退出全屏时，页面布局仍正常恢复。 */
+    }
+  }
+  nativeFullscreen = false
+}
+
+async function toggleImmersive() {
+  if (immersive.value) return leaveImmersive()
+  if (selected.value) clearSelection()
+  immersive.value = true
+  if (atlasRoot.value?.requestFullscreen) {
+    nativeFullscreen = true
+    try {
+      await atlasRoot.value.requestFullscreen()
+    } catch {
+      // 移动浏览器不支持全屏时，使用同样铺满视口的页面布局。
+      nativeFullscreen = false
+    }
+  }
+}
+
+function onFullscreenChange() {
+  if (nativeFullscreen && document.fullscreenElement !== atlasRoot.value) {
+    nativeFullscreen = false
+    immersive.value = false
+  }
+}
+
+watch(immersive, (value) => {
+  engine?.setImmersive(value)
+  engine?.setLabelsVisible(labelsOn.value && !value)
+})
 
 function focusMatch(step = 1) {
   if (!results.value.length) return
@@ -464,15 +506,22 @@ function toggleChains() {
   engine?.setShowChains(atlas.showChains)
 }
 
-function onKeydown(event) {
+async function onKeydown(event) {
   const typing = ['INPUT', 'TEXTAREA'].includes(event.target?.tagName)
   if (event.key === 'Escape') {
+    if (immersive.value) {
+      await leaveImmersive()
+      return
+    }
     if (selected.value) clearSelection()
     else if (searchInput.value) clearSearch()
     return
   }
   if (event.key === '/' && !typing) {
     event.preventDefault()
+    if (immersive.value) await leaveImmersive()
+    panelsOpen.value = true
+    await nextTick()
     searchField.value?.focus()
     return
   }
@@ -547,6 +596,7 @@ onMounted(async () => {
     },
   })
   window.addEventListener('keydown', onKeydown)
+  document.addEventListener('fullscreenchange', onFullscreenChange)
   if (import.meta.env.DEV) {
     // 仅供浏览器联调脚本读取：生产构建不会包含这段。
     window.__atlas = engine
@@ -565,6 +615,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  if (document.fullscreenElement === atlasRoot.value) document.exitFullscreen().catch(() => {})
   if (searchTimer) window.clearTimeout(searchTimer)
   engine?.dispose()
   engine = null
@@ -572,7 +624,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="atlas">
+  <div ref="atlasRoot" class="atlas" :class="{ 'is-immersive': immersive }">
     <div
       ref="stage"
       class="stage"
@@ -601,6 +653,18 @@ onBeforeUnmount(() => {
       </div>
       <div class="head-actions">
         <button
+          type="button"
+          class="ghost-btn mono immersive-toggle"
+          :class="{ 'is-on': immersive }"
+          :aria-pressed="immersive"
+          :aria-label="immersive ? '退出沉浸模式' : '进入沉浸模式'"
+          :title="immersive ? '退出沉浸模式（Esc）' : '沉浸观星：收起面板与标签'"
+          @click="toggleImmersive"
+        >
+          <Icon :key="immersive" :name="immersive ? 'collapse' : 'expand'" :size="14" />
+          <span>{{ immersive ? '退出沉浸' : '沉浸' }}</span>
+        </button>
+        <button
           v-if="motionMuted"
           type="button"
           class="ghost-btn mono is-muted"
@@ -622,6 +686,7 @@ onBeforeUnmount(() => {
           <span class="btn-text">{{ autoRotate ? '自动观测' : '已暂停' }}</span>
         </button>
         <button
+          v-if="!immersive"
           type="button"
           class="ghost-btn mono"
           :class="{ 'is-on': labelsOn }"
@@ -632,11 +697,11 @@ onBeforeUnmount(() => {
           <Icon :name="labelsOn ? 'eye' : 'eyeOff'" :size="13" />
           <span class="btn-text">文档名</span>
         </button>
-        <button type="button" class="ghost-btn mono" :disabled="loading" @click="reload">
+        <button v-if="!immersive" type="button" class="ghost-btn mono" :disabled="loading" @click="reload">
           <Icon name="refresh" :size="13" :class="{ spin: loading }" />
           <span class="btn-text">重建</span>
         </button>
-        <button type="button" class="ghost-btn mono" :class="{ 'is-on': panelsOpen }" @click="panelsOpen = !panelsOpen">
+        <button v-if="!immersive" type="button" class="ghost-btn mono" :class="{ 'is-on': panelsOpen }" @click="panelsOpen = !panelsOpen">
           <Icon name="layers" :size="13" />
           <span class="btn-text">面板</span>
         </button>
@@ -650,7 +715,7 @@ onBeforeUnmount(() => {
       <span v-else>{{ formatNumber(total) }} 个分片 · {{ formatNumber(atlas.edges.length) }} 条语义连线</span>
     </div>
 
-    <aside v-if="panelsOpen && !failed" class="panel left-panel" :class="{ 'is-hidden': !panelsOpen }">
+    <aside v-if="panelsOpen && !immersive && !failed" class="panel left-panel" :class="{ 'is-hidden': !panelsOpen }">
       <div class="panel-block">
         <label class="search-box atlas-search">
           <Icon name="search" :size="14" />
@@ -779,7 +844,7 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <div class="doc-labels" aria-hidden="true">
+    <div v-if="!immersive" class="doc-labels" aria-hidden="true">
       <button
         v-for="label in docLabels"
         :key="label.md5"
@@ -953,12 +1018,21 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background:
-    radial-gradient(1200px 700px at 62% 34%, rgba(58, 74, 120, 0.34), transparent 62%),
-    radial-gradient(900px 620px at 22% 72%, rgba(104, 56, 78, 0.24), transparent 64%),
-    radial-gradient(700px 520px at 82% 82%, rgba(36, 92, 92, 0.2), transparent 66%),
-    linear-gradient(180deg, #06070c 0%, #07080f 52%, #05060a 100%);
+  background: #090a0a;
   color: var(--ink);
+}
+
+.atlas.is-immersive {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  width: 100%;
+  height: 100%;
+}
+
+.is-immersive .hud-top,
+.is-immersive .legend {
+  display: none;
 }
 
 .stage {
@@ -980,7 +1054,7 @@ onBeforeUnmount(() => {
   width: 24px;
   height: 24px;
   margin: -12px 0 0 -12px;
-  border: 1px solid rgba(226, 104, 76, 0.9);
+  border: 1px solid rgba(218, 195, 141, 0.9);
   border-radius: 50%;
   pointer-events: none;
   z-index: 4;
@@ -1006,7 +1080,7 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 2;
   pointer-events: none;
-  background: radial-gradient(circle at 50% 46%, transparent 42%, rgba(3, 4, 8, 0.55) 100%);
+  background: radial-gradient(circle at 50% 46%, transparent 48%, rgba(3, 4, 8, 0.3) 100%);
 }
 
 .grain {
@@ -1212,7 +1286,7 @@ onBeforeUnmount(() => {
   position: absolute;
   z-index: 7;
   border: 1px solid rgba(237, 231, 218, 0.09);
-  background: rgba(9, 10, 14, 0.88);
+  background: rgba(20, 21, 21, 0.96);
   box-shadow: none;
 }
 
@@ -2042,6 +2116,8 @@ onBeforeUnmount(() => {
 
   .head-actions {
     gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .ghost-btn {

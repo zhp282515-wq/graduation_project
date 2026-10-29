@@ -17,6 +17,20 @@
 
 .shell.has-ledger {
   grid-template-columns: var(--rail-w) 312px minmax(0, 1fr);
+  transition: grid-template-columns 320ms var(--ease-out);
+}
+
+.shell.has-ledger.ledger-collapsed {
+  grid-template-columns: var(--rail-w) 0px minmax(0, 1fr);
+}
+
+.ledger-slot { min-width: 0; min-height: 0; overflow: hidden; }
+/* 抽屉模式下会话栏通过 Teleport 落到 body，占位格不该再参与网格。 */
+.ledger-slot:not(.is-inline) { display: none; }
+.ledger-slot.is-collapsed { visibility: hidden; transition: visibility 0s linear 320ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .shell.has-ledger, .ledger-slot.is-collapsed { transition: none; }
 }
 
 .main {
@@ -60,6 +74,91 @@
   margin-top: 10px;
 }
 
+/* 子页沿用同一套抬头，避免每页把 h1 压到 17px。 */
+.head-title {
+  font-family: var(--font-serif);
+  font-size: clamp(21px, 2.1vw, 26px);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+}
+
+/* ------------------------------------------------------------ 通用件 */
+
+.spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 文本链：只在 hover 时出现下划线，静默时与正文同色。 */
+.link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+.link-btn:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+}
+
+.link-btn:active {
+  transform: translateY(0.5px);
+}
+
+/* 面板：统一圆角、描边与极轻投影，替代各页各写一遍的灰卡。 */
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.card--flat {
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+/* 空态：图标 / 标题 / 说明 / 动作，四页共用同一节奏。 */
+.state-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 46ch;
+}
+
+.state-block[data-align="center"] {
+  align-items: center;
+  text-align: center;
+  margin-inline: auto;
+}
+
+.state-title {
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.state-text {
+  color: var(--ink-3);
+  font-size: var(--text-base);
+  line-height: 1.75;
+}
+
 .view-head .latin {
   font-family: var(--font-display);
   font-style: italic;
@@ -98,10 +197,14 @@
 .btn:hover {
   background: var(--surface-2);
   border-color: var(--ink-4);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-soft);
 }
 
 .btn:active {
-  transform: translateY(1px);
+  transform: translateY(0.5px) scale(0.995);
+  box-shadow: none;
+  transition-duration: 90ms;
 }
 
 .btn:disabled {
@@ -303,7 +406,7 @@
   color: var(--ink-3);
 }
 
-/* 下划线字段：编辑感来自"纸上的横线"，而不是描边输入框 */
+/* 表单字段 */
 .field {
   display: flex;
   flex-direction: column;
@@ -321,14 +424,13 @@
 .field input,
 .field textarea {
   width: 100%;
-  border: 0;
-  border-bottom: 1px solid var(--line-strong);
-  background: transparent;
-  padding: 7px 0;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  padding: 9px 12px;
   font-size: var(--text-md);
   color: var(--ink);
-  border-radius: 0;
-  transition: border-color var(--t-fast);
+  border-radius: var(--r-sm);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
 
 .field input::placeholder,
@@ -339,7 +441,8 @@
 .field input:focus,
 .field textarea:focus {
   outline: none;
-  border-bottom-color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* 搜索框：带放大镜的细长条 */
@@ -454,8 +557,9 @@
   position: fixed;
   inset: 0;
   z-index: var(--z-drawer);
-  background: color-mix(in srgb, var(--bg-deep) 62%, transparent);
-  backdrop-filter: blur(3px);
+  background: var(--scrim);
+  backdrop-filter: blur(4px) saturate(0.96);
+  -webkit-backdrop-filter: blur(4px) saturate(0.96);
 }
 
 .sheet {
@@ -555,3 +659,7 @@
     transform: translateY(30px);
   }
 }
+
+html[data-public-page="true"] body { overflow-y: auto; overflow-x: hidden; }
+html[data-public-page="true"] #app { height: auto; min-height: 100svh; }
+.public-layout { min-height: 100svh; }

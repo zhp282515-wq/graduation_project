@@ -1,4 +1,4 @@
-import { request } from './http'
+import { request, finishResponse } from './http'
 import { consumeSse } from './sse'
 
 /**
@@ -21,7 +21,7 @@ export async function streamChat({
     raw: true,
   })
   if (!response.body) throw new Error('浏览器不支持流式响应')
-  await consumeSse(response.body, onEvent)
+  try { await consumeSse(response.body, onEvent) } finally { finishResponse(response) }
 }
 
 /**
@@ -34,5 +34,5 @@ export async function regenerateChat({ sessionId, messageId, signal, onEvent }) 
   )}/regenerate`
   const response = await request(path, { method: 'POST', signal, raw: true })
   if (!response.body) throw new Error('浏览器不支持流式响应')
-  await consumeSse(response.body, onEvent)
+  try { await consumeSse(response.body, onEvent) } finally { finishResponse(response) }
 }

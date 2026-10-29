@@ -1,13 +1,18 @@
-/**
- * 唯一的 HTTP 出入口。
- *
- * 与后端的契约（api/main.py）：
- * - 所有请求都带 `x-user-id`，缺失时后端返回 401「缺少用户标识」；
- * - 错误体统一是 `{ detail }`，FastAPI 的 422 校验错误里 detail 是数组；
- * - 前端只做同源请求，开发期由 vite 把 /api 与 /uploads 转发到 8002。
- */
-
-export const USER_ID = 'user_001'
+/** Cookie authentication and cancellation across account boundaries. */
+let csrfToken = ''
+let identityEpoch = 0
+const pending = new Set()
+export function setCsrfToken(value) { csrfToken = value || '' }
+export function invalidateRequests() {
+  identityEpoch++
+  for (const controller of pending) controller.abort()
+  pending.clear()
+}
+function authExpired() {
+  if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('auth-expired'))
+}
+function aborted() { return Object.assign(new Error('账号已切换或请求已取消'), { name: 'AbortError' }) }
+export function finishResponse(response) { response?.releaseRequest?.() }
 
 export class ApiError extends Error {
   constructor(message, { status = 0, url = '', detail = null } = {}) {
@@ -73,9 +78,17 @@ async function parseBody(response) {
  * }} [options]
  */
 export async function request(path, options = {}) {
-  const { method = 'GET', query, body, headers = {}, signal, raw = false } = options
+  const { method = 'GET', query, body, headers = {}, signal, raw = false, publicRequest = false } = options
+  const epoch = identityEpoch
+  const controller = new AbortController()
+  const cancel = () => controller.abort()
+  if (signal?.aborted) throw aborted()
+  signal?.addEventListener('abort', cancel, { once: true })
+  pending.add(controller)
+  const release = () => { pending.delete(controller); signal?.removeEventListener('abort', cancel) }
   const url = `${path}${buildQuery(query)}`
-  const init = { method, signal, headers: { 'x-user-id': USER_ID, ...headers } }
+  const init = { method, signal: controller.signal, credentials: 'same-origin', headers: { ...headers } }
+  if (csrfToken && !['GET', 'HEAD'].includes(method)) init.headers['X-CSRF-Token'] = csrfToken
 
   if (body instanceof FormData) {
     // 交给浏览器自己带 boundary，手写 Content-Type 会导致解析失败。
@@ -89,11 +102,15 @@ export async function request(path, options = {}) {
   try {
     response = await fetch(url, init)
   } catch (error) {
+    release()
     if (isAbortError(error)) throw error
     throw new ApiError('网络不可达，请检查后端服务是否在运行', { url, detail: error?.message })
   }
 
+  if (epoch !== identityEpoch) { release(); throw aborted() }
   if (!response.ok) {
+    release()
+    if (response.status === 401 && !publicRequest) authExpired()
     const payload = await parseBody(response)
     const fallback = `请求失败（HTTP ${response.status}）`
     throw new ApiError(readDetail(payload, fallback), {
@@ -103,9 +120,12 @@ export async function request(path, options = {}) {
     })
   }
 
-  if (raw) return response
-  if (response.status === 204) return null
-  return parseBody(response)
+  if (raw) { response.releaseRequest = release; return response }
+  try {
+    const payload = response.status === 204 ? null : await parseBody(response)
+    if (epoch !== identityEpoch) throw aborted()
+    return payload
+  } finally { release() }
 }
 
 export const http = {
@@ -131,12 +151,17 @@ export function uploadWithProgress(path, file, { fields = {}, onProgress, signal
 
     const xhr = new XMLHttpRequest()
     xhr.open('POST', path, true)
-    xhr.setRequestHeader('x-user-id', USER_ID)
+    const epoch = identityEpoch
+    const controller = { abort: () => xhr.abort() }
+    pending.add(controller)
+    xhr.withCredentials = true
+    if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken)
     xhr.responseType = 'text'
 
     const abort = () => xhr.abort()
     if (signal) {
       if (signal.aborted) {
+        pending.delete(controller)
         reject(Object.assign(new Error('已取消'), { name: 'AbortError' }))
         return
       }
@@ -144,6 +169,7 @@ export function uploadWithProgress(path, file, { fields = {}, onProgress, signal
     }
 
     const cleanup = () => {
+      pending.delete(controller)
       if (signal) signal.removeEventListener('abort', abort)
     }
 
@@ -168,6 +194,8 @@ export function uploadWithProgress(path, file, { fields = {}, onProgress, signal
 
     xhr.onload = () => {
       cleanup()
+      if (epoch !== identityEpoch) { reject(aborted()); return }
+      if (xhr.status === 401) authExpired()
       let payload = null
       try {
         payload = xhr.responseText ? JSON.parse(xhr.responseText) : null

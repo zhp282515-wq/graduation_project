@@ -3,7 +3,7 @@ from uuid import uuid4
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from session.models import DEFAULT_SESSION_TITLE, Memory, Message, Session
+from session.models import DEFAULT_SESSION_TITLE, Memory, Message, Note, Session
 from session.ports import AgentPort, SessionRepository
 from session.runs import DEFAULT_RUNS, KeyedLocks, RunStream
 from session.sources import normalize_sources
@@ -11,6 +11,10 @@ from utils.logger_tool import logger
 from datetime import datetime
 
 _AUTOTITLE_MAX_LEN = 30
+
+
+class ModelCapabilityError(ValueError):
+    """当前模型无法处理本次请求或其历史。"""
 
 
 class SessionService:
@@ -24,12 +28,26 @@ class SessionService:
         runs: KeyedLocks | None = None,
         on_complete: Callable[[str, str, str], None] | None = None,
         history_builder: Callable[[list[Message]], list[dict[str, Any]]] | None = None,
+        model_resolver: Callable[[], tuple[Any, dict[str, Any]]] | None = None,
     ):
+        self._principal = None
         self._repo = repository
         self._runtime = runtime
         self._runs = runs if runs is not None else DEFAULT_RUNS
         self._on_complete = on_complete
         self._history_builder = history_builder
+        self._model_resolver = model_resolver
+
+    def _model_for_run(self, query, history, reasoning=None):
+        if self._model_resolver is None:
+            return None
+        model, capabilities = self._model_resolver()
+        if reasoning and not capabilities["reasoning"]:
+            raise ModelCapabilityError("当前模型不支持深度思考，请关闭深度思考或联系管理员切换模型")
+        if not capabilities["images"] and (any(p.get("type") == "image_url" for p in query if isinstance(p, dict))
+                                                or any(m.images for m in history)):
+            raise ModelCapabilityError("当前模型不支持图片，当前问题或对话历史包含图片，请联系管理员切换模型或新建会话")
+        return model
 
     def create_session(self, user_id: str, title: str | None = None) -> Session:
         # 未指定标题（= 用户点「新会话」）时复用已有的空会话，
@@ -47,11 +65,31 @@ class SessionService:
     def list_memories(self, user_id: str) -> list[Memory]:
         return self._repo.list_memories(user_id)
 
+    def add_memory(self, user_id: str, content: str, category: str = "fact") -> Memory:
+        return self._repo.add_memory(user_id, content, category)
+
     def update_memory(self, user_id: str, memory_id: str, content: str) -> Memory | None:
         return self._repo.update_memory(user_id, memory_id, content)
 
     def delete_memory(self, user_id: str, memory_id: str) -> bool:
         return self._repo.delete_memory(user_id, memory_id)
+
+    # ---------- 已保存的笔记 ----------
+    def create_note(self, user_id: str, title: str, content: str,
+                    source_session_id: str | None = None) -> Note:
+        return self._repo.create_note(user_id, title, content, source_session_id)
+
+    def list_notes(self, user_id: str) -> list[Note]:
+        return self._repo.list_notes(user_id)
+
+    def get_note(self, user_id: str, note_id: str) -> Note | None:
+        return self._repo.get_note(user_id, note_id)
+
+    def update_note(self, user_id: str, note_id: str, *, title: str, content: str) -> Note | None:
+        return self._repo.update_note(user_id, note_id, title=title, content=content)
+
+    def delete_note(self, user_id: str, note_id: str) -> bool:
+        return self._repo.delete_note(user_id, note_id)
 
     def list_sessions(self, user_id: str) -> list[Session]:
         return self._repo.list_sessions(user_id)
@@ -105,6 +143,7 @@ class SessionService:
             if session is None:
                 raise ValueError(f"会话不存在：{session_id}")
             prefix = self._repo.get_messages(user_id, session_id)
+            model = self._model_for_run(query, prefix, reasoning)
             question = self._repo.add_message(
                 session_id, "user", text,
                 images=image_urls if image_urls is not None else images,
@@ -114,7 +153,7 @@ class SessionService:
             return RunStream(self._stream(
                 session_id, query, max_turns=max_turns,
                 reasoning=reasoning, user_id=user_id, question_id=question.id,
-                history=prefix, context_revision=getattr(session, "context_revision", 0),
+                history=prefix, context_revision=getattr(session, "context_revision", 0), model=model,
             ), lease)
         except BaseException:
             lease.release()
@@ -146,12 +185,13 @@ class SessionService:
             question = messages[question_index]
             query = self._build_history([question])[0]["content"]
             prefix = messages[:question_index]
+            model = self._model_for_run(query, prefix)
             # 在响应开始前校验图片；不在模型调用中途才发现历史不可恢复。
             seed = self._build_history(prefix)
             return RunStream(self._stream(
                 session_id, query, max_turns=None, user_id=user_id,
                 question_id=question.id, history=prefix, context_revision=session.context_revision,
-                replacement_id=answer.id, seed=seed,
+                replacement_id=answer.id, seed=seed, model=model,
             ), lease)
         except BaseException:
             lease.release()
@@ -170,6 +210,7 @@ class SessionService:
         context_revision: int,
         replacement_id: int | None = None,
         seed: list[dict[str, Any]] | None = None,
+        model: Any = None,
     ) -> Iterator[dict[str, Any]]:
         started = time.perf_counter()
         pending_done = None
@@ -185,10 +226,14 @@ class SessionService:
         }
         try:
             memory_lines = [m.content for m in self._repo.list_memories(user_id)] if user_id else []
+            access = {"principal": self._principal} if self._principal is not None else {}
+            if model is not None:
+                access["model"] = model
             events = self._runtime.stream(
                 query, session_id=runtime_id, max_turns=max_turns,
                 reasoning=reasoning, memory=memory_lines, context_revision=context_revision,
                 history=lambda: seed if seed is not None else self._build_history(history),
+                **access,
             )
             try:
                 for event in events:

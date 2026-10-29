@@ -1,0 +1,298 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-28T10:39:10.631Z",
+  "title": "Design System: 饭饭 · 校园智能体",
+  "extensions": {
+    "colorMeta": {
+      "paper-bg": {
+        "role": "neutral",
+        "displayName": "paper-bg",
+        "canonical": "#fafafa",
+        "tonalRamp": [
+          "color-mix(in oklch, #fafafa 25%, black)",
+          "color-mix(in oklch, #fafafa 45%, black)",
+          "color-mix(in oklch, #fafafa 65%, black)",
+          "color-mix(in oklch, #fafafa 85%, black)",
+          "color-mix(in oklch, #fafafa 85%, white)",
+          "color-mix(in oklch, #fafafa 65%, white)",
+          "color-mix(in oklch, #fafafa 45%, white)",
+          "color-mix(in oklch, #fafafa 25%, white)"
+        ]
+      },
+      "paper-surface": {
+        "role": "neutral",
+        "displayName": "paper-surface",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "color-mix(in oklch, #ffffff 25%, black)",
+          "color-mix(in oklch, #ffffff 45%, black)",
+          "color-mix(in oklch, #ffffff 65%, black)",
+          "color-mix(in oklch, #ffffff 85%, black)",
+          "color-mix(in oklch, #ffffff 85%, white)",
+          "color-mix(in oklch, #ffffff 65%, white)",
+          "color-mix(in oklch, #ffffff 45%, white)",
+          "color-mix(in oklch, #ffffff 25%, white)"
+        ]
+      },
+      "paper-ink": {
+        "role": "neutral",
+        "displayName": "paper-ink",
+        "canonical": "#202020",
+        "tonalRamp": [
+          "color-mix(in oklch, #202020 25%, black)",
+          "color-mix(in oklch, #202020 45%, black)",
+          "color-mix(in oklch, #202020 65%, black)",
+          "color-mix(in oklch, #202020 85%, black)",
+          "color-mix(in oklch, #202020 85%, white)",
+          "color-mix(in oklch, #202020 65%, white)",
+          "color-mix(in oklch, #202020 45%, white)",
+          "color-mix(in oklch, #202020 25%, white)"
+        ]
+      },
+      "paper-accent": {
+        "role": "primary",
+        "displayName": "paper-accent",
+        "canonical": "#303030",
+        "tonalRamp": [
+          "color-mix(in oklch, #303030 25%, black)",
+          "color-mix(in oklch, #303030 45%, black)",
+          "color-mix(in oklch, #303030 65%, black)",
+          "color-mix(in oklch, #303030 85%, black)",
+          "color-mix(in oklch, #303030 85%, white)",
+          "color-mix(in oklch, #303030 65%, white)",
+          "color-mix(in oklch, #303030 45%, white)",
+          "color-mix(in oklch, #303030 25%, white)"
+        ]
+      },
+      "night-bg": {
+        "role": "neutral",
+        "displayName": "night-bg",
+        "canonical": "#111212",
+        "tonalRamp": [
+          "color-mix(in oklch, #111212 25%, black)",
+          "color-mix(in oklch, #111212 45%, black)",
+          "color-mix(in oklch, #111212 65%, black)",
+          "color-mix(in oklch, #111212 85%, black)",
+          "color-mix(in oklch, #111212 85%, white)",
+          "color-mix(in oklch, #111212 65%, white)",
+          "color-mix(in oklch, #111212 45%, white)",
+          "color-mix(in oklch, #111212 25%, white)"
+        ]
+      },
+      "night-accent": {
+        "role": "primary",
+        "displayName": "night-accent",
+        "canonical": "#d8ded8",
+        "tonalRamp": [
+          "color-mix(in oklch, #d8ded8 25%, black)",
+          "color-mix(in oklch, #d8ded8 45%, black)",
+          "color-mix(in oklch, #d8ded8 65%, black)",
+          "color-mix(in oklch, #d8ded8 85%, black)",
+          "color-mix(in oklch, #d8ded8 85%, white)",
+          "color-mix(in oklch, #d8ded8 65%, white)",
+          "color-mix(in oklch, #d8ded8 45%, white)",
+          "color-mix(in oklch, #d8ded8 25%, white)"
+        ]
+      },
+      "entry-hero": {
+        "role": "neutral",
+        "displayName": "entry-hero",
+        "canonical": "#f5f5f5",
+        "tonalRamp": [
+          "color-mix(in oklch, #f5f5f5 25%, black)",
+          "color-mix(in oklch, #f5f5f5 45%, black)",
+          "color-mix(in oklch, #f5f5f5 65%, black)",
+          "color-mix(in oklch, #f5f5f5 85%, black)",
+          "color-mix(in oklch, #f5f5f5 85%, white)",
+          "color-mix(in oklch, #f5f5f5 65%, white)",
+          "color-mix(in oklch, #f5f5f5 45%, white)",
+          "color-mix(in oklch, #f5f5f5 25%, white)"
+        ]
+      },
+      "entry-night": {
+        "role": "neutral",
+        "displayName": "entry-night",
+        "canonical": "#151616",
+        "tonalRamp": [
+          "color-mix(in oklch, #151616 25%, black)",
+          "color-mix(in oklch, #151616 45%, black)",
+          "color-mix(in oklch, #151616 65%, black)",
+          "color-mix(in oklch, #151616 85%, black)",
+          "color-mix(in oklch, #151616 85%, white)",
+          "color-mix(in oklch, #151616 65%, white)",
+          "color-mix(in oklch, #151616 45%, white)",
+          "color-mix(in oklch, #151616 25%, white)"
+        ]
+      },
+      "entry-star-accent": {
+        "role": "primary",
+        "displayName": "entry-star-accent",
+        "canonical": "#dfaa79",
+        "tonalRamp": [
+          "color-mix(in oklch, #dfaa79 25%, black)",
+          "color-mix(in oklch, #dfaa79 45%, black)",
+          "color-mix(in oklch, #dfaa79 65%, black)",
+          "color-mix(in oklch, #dfaa79 85%, black)",
+          "color-mix(in oklch, #dfaa79 85%, white)",
+          "color-mix(in oklch, #dfaa79 65%, white)",
+          "color-mix(in oklch, #dfaa79 45%, white)",
+          "color-mix(in oklch, #dfaa79 25%, white)"
+        ]
+      }
+    },
+    "shadows": [
+      {
+        "name": "paper-sheet",
+        "value": "0 28px 64px -46px rgba(38, 28, 16, 0.5), 0 1px 0 rgba(255, 255, 255, 0.45) inset",
+        "purpose": "工作区 sheet"
+      },
+      {
+        "name": "paper-float",
+        "value": "0 12px 34px -28px rgba(38, 28, 16, 0.45)",
+        "purpose": "工作区浮层"
+      },
+      {
+        "name": "night-sheet",
+        "value": "0 34px 96px -48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(236, 230, 216, 0.05) inset",
+        "purpose": "夜色 sheet"
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "进入和状态过渡"
+      },
+      {
+        "name": "fast",
+        "value": "130ms",
+        "purpose": "控件状态"
+      },
+      {
+        "name": "base",
+        "value": "220ms",
+        "purpose": "常规过渡"
+      },
+      {
+        "name": "slow",
+        "value": "480ms",
+        "purpose": "较慢过渡"
+      },
+      {
+        "name": "constellation-breathe",
+        "value": "36s ease-in-out infinite alternate",
+        "purpose": "入口可见星图缓慢呼吸；减少动态效果时关闭"
+      },
+      {
+        "name": "entry-descend",
+        "value": ".65s cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "入口首屏自上而下依次渐入；减少动态效果时关闭"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "workspace-nav",
+        "value": "900px"
+      },
+      {
+        "name": "workspace-sheet",
+        "value": "640px"
+      },
+      {
+        "name": "entrance-mid",
+        "value": "1100px"
+      },
+      {
+        "name": "entrance-mobile",
+        "value": "760px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Workspace accent button",
+      "kind": "button",
+      "refersTo": "workspace-button-accent",
+      "description": "工作区强调操作。",
+      "html": "<button class=\"ds-button\">继续</button>",
+      "css": ".ds-button{height:34px;padding:0 14px;border:1px solid var(--accent,#303030);border-radius:var(--r-sm,9px);background:var(--accent,#303030);color:var(--accent-ink,#ffffff);font-size:12.5px;transition:background 130ms} .ds-button:hover{background:var(--accent-hover,#111111)} .ds-button:focus-visible{outline:2px solid var(--accent,#303030);outline-offset:2px} .ds-button:active{transform:translateY(1px)}"
+    },
+    {
+      "name": "Workspace quiet button",
+      "kind": "button",
+      "description": "次要操作。",
+      "html": "<button class=\"ds-quiet\">查看</button>",
+      "css": ".ds-quiet{height:34px;padding:0 8px;border:1px solid transparent;border-radius:var(--r-sm,9px);background:transparent;color:var(--ink-2,#444444);font-size:12.5px}.ds-quiet:hover{background:var(--accent-soft,rgba(48,48,48,.08));color:var(--ink,#202020)}.ds-quiet:focus-visible{outline:2px solid var(--accent,#303030);outline-offset:2px}"
+    },
+    {
+      "name": "Entrance submit",
+      "kind": "button",
+      "refersTo": "entry-submit",
+      "description": "入口主要行动。",
+      "html": "<button class=\"ds-submit\">登录饭饭 <span aria-hidden=\"true\">→</span></button>",
+      "css": ".ds-submit{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:52px;padding:13px 20px;border:0;border-radius:12px;background:var(--entry-red,#303030);color:var(--entry-on-red,#ffffff);font-size:15px;transition:background .2s}.ds-submit:hover{background:var(--entry-red-hover,#111111)}.ds-submit:focus-visible{outline:2px solid var(--entry-red,#303030);outline-offset:5px}.ds-submit:active{transform:translateY(1px)}"
+    },
+    {
+      "name": "Entrance field",
+      "kind": "input",
+      "description": "带可见标签和圆角边框的输入。",
+      "html": "<label class=\"ds-field\">用户名<input placeholder=\"请输入用户名\"></label>",
+      "css": ".ds-field{display:grid;gap:7px;color:var(--entry-muted,#5c5c5c);font-size:14px}.ds-field input{width:100%;min-height:48px;border:1px solid #d9d9d9;border-radius:12px;background:#fafafa;padding:11px 14px;color:var(--entry-ink,#202020);font-size:16px;transition:border-color .2s,background .2s,box-shadow .2s}.ds-field input:focus{outline:none;border-color:var(--entry-red,#303030);background:#fff;box-shadow:0 0 0 3px rgba(48,48,48,.12)}"
+    },
+    {
+      "name": "Status chip",
+      "kind": "chip",
+      "description": "辅助状态标记。",
+      "html": "<span class=\"ds-chip\">已完成</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid var(--line,rgba(32,32,32,.14));border-radius:999px;color:var(--ink-3,#5c5c5c);font-size:11px;letter-spacing:.06em}"
+    },
+    {
+      "name": "Workspace panel",
+      "kind": "card",
+      "refersTo": "workspace-panel",
+      "description": "内容容器。",
+      "html": "<div class=\"ds-panel\">内容区域</div>",
+      "css": ".ds-panel{border:1px solid var(--line,rgba(32,32,32,.14));border-radius:var(--r-md,12px);background:var(--surface,#ffffff);color:var(--ink,#202020)}"
+    },
+    {
+      "name": "Entrance navigation",
+      "kind": "nav",
+      "description": "入口章节导航。",
+      "html": "<nav class=\"ds-nav\"><a href=\"#\">问学</a><a href=\"#\">来源</a><a href=\"#\">星野</a></nav>",
+      "css": ".ds-nav{display:flex;gap:36px;font-size:14px}.ds-nav a{color:var(--entry-muted,#5c5c5c);text-decoration:none;transition:color .2s}.ds-nav a:hover{color:var(--entry-red,#303030)}.ds-nav a:focus-visible{outline:2px solid var(--entry-red,#303030);outline-offset:5px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "明亮阅读室与黑色知识空间",
+    "overview": "以白色为主的阅读空间和中性黑灰文字构成清晰的日常工作区，深灰标记操作与选择。公开入口将校徽融入品牌构图，以浅灰圆角叙事区和白色身份区形成层次；知识星图转入黑灰空间。简洁排版、细线与轻柔转场共同建立质感。",
+    "keyCharacteristics": [
+      "白色层次、中性黑灰正文与克制的深灰强调。",
+      "中文宋体标题配无衬线正文，等宽字体服务编号和辅助信息。",
+      "工作区使用明暗语义主题；暗色以黑灰为基础，星图保留独立空间。",
+      "校徽、圆角、细线与色面界定结构，来源纸页和知识关系承担内容表达。"
+    ],
+    "rules": [
+      {
+        "name": "The Theme Boundary Rule",
+        "body": "工作区使用随主题变化的语义变量；公开入口使用独立的 `--entry-*` 变量，不受工作区主题或星图强制夜色影响。",
+        "section": "colors"
+      },
+      {
+        "name": "The Content Depth Rule",
+        "body": "纸页层叠表达来源，轨道和连线表达知识关系；普通容器保持清晰、克制。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do 先复用现有语义变量、字体栈、细线和组件状态。",
+      "Do 保留入口固定色与工作区明暗主题的边界。",
+      "Do 用来源和知识关系决定视觉强调，并尊重减少动态效果。",
+      "Do 在窄屏保持可读标签、键盘焦点和星图文字选择控件。"
+    ],
+    "donts": [
+      "Don't 将入口局部深色星图、纸页旋转或首屏构图套用于所有业务页面。",
+      "Don't 添加虚构统计、学校官方背书或把示例写成实时校园回答。",
+      "Don't 用占位文字替代可见字段标签，或把知识空间描述成真实天体。"
+    ]
+  }
+}

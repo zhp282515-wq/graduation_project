@@ -15,14 +15,14 @@ const emit = defineEmits(['regenerate', 'open-source', 'open-sources', 'refill']
 
 const pad = computed(() => String(props.index).padStart(2, '0'))
 const time = computed(() => formatClock(props.turn.createdAt))
-const live = computed(() => props.isCurrent)
-
-const reasoning = computed(() => (props.isCurrent ? props.run.reasoning || '' : ''))
-const steps = computed(() => (props.isCurrent ? props.run.steps || [] : []))
-const phase = computed(() => (props.isCurrent ? props.run.phase : ''))
-const error = computed(() => (props.isCurrent ? props.run.error : ''))
-const finishReason = computed(() => (props.isCurrent ? props.run.finishReason : ''))
-const elapsedMs = computed(() => (props.isCurrent ? props.run.elapsedMs : 0))
+const live = computed(() => props.isCurrent && Boolean(props.run.active))
+const details = computed(() => (props.isCurrent ? props.run : props.turn.trace) || {})
+const reasoning = computed(() => details.value.reasoning || '')
+const steps = computed(() => details.value.steps || [])
+const phase = computed(() => details.value.phase || '')
+const error = computed(() => details.value.error || '')
+const finishReason = computed(() => details.value.finishReason || '')
+const elapsedMs = computed(() => details.value.elapsedMs || 0)
 </script>
 
 <template>
@@ -128,18 +128,14 @@ const elapsedMs = computed(() => (props.isCurrent ? props.run.elapsedMs : 0))
 
 .question {
   position: relative;
-  padding: 2px 0 6px 18px;
-  border-left: 2px solid var(--ink);
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
 }
 
 .question::before {
-  content: "";
-  position: absolute;
-  left: -2px;
-  top: 0;
-  width: 2px;
-  height: 14px;
-  background: var(--accent);
+  content: none;
 }
 
 .q-text {

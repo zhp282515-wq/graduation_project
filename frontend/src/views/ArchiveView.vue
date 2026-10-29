@@ -1,6 +1,9 @@
-﻿<script setup>
+<script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
+import { request } from '../api/http'
+import { useAtlasStore } from '../stores/atlas'
 import { useLibraryStore, stageLabel } from '../stores/library'
 import { useUiStore } from '../stores/ui'
 import { useConfirm } from '../composables/confirm'
@@ -10,7 +13,23 @@ import sealUrl from '../assets/school-seal.svg'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const atlas = useAtlasStore()
 const ui = useUiStore()
+const visibilityBusy = ref(false)
+async function setVisibility(event) {
+  const visibility = event.target.value
+  if (!auth.isAdmin || !activeDoc.value) return
+  visibilityBusy.value = true
+  try {
+    const changed = await request(`/api/knowledge/documents/${activeDoc.value.file_md5}/visibility`, { method: 'PATCH', body: { visibility } })
+    Object.assign(activeDoc.value, changed)
+    if (library.document) Object.assign(library.document, changed)
+    atlas.reset()
+    ui.notify('文档可见性已更新', 'ok')
+  } catch (err) { event.target.value = activeDoc.value.visibility; ui.notify(err.message, 'err') }
+  finally { visibilityBusy.value = false }
+}
 const library = useLibraryStore()
 const { confirm } = useConfirm()
 
@@ -38,6 +57,21 @@ const totalChunks = computed(
 )
 // 只有 PDF 分片带真实页码，其他格式的 page 字段没有意义。
 const activeIsPdf = computed(() => String(library.document?.file_type || '').toLowerCase() === 'pdf')
+// 计数为 0 的类型不出现，筛选行始终只有一行。
+const facetList = computed(() =>
+  library.FACETS
+    .map((facet) => ({ ...facet, count: Number(facets.value[facet.key || 'all']) || 0 }))
+    .filter((facet) => !facet.key || facet.count > 0),
+)
+// 全部已入库时状态点没有信息量，不画；出现处理中／失败才逐行标出。
+const showStatusDot = computed(() => docs.value.some((doc) => doc.status && doc.status !== 'ready'))
+// 上传入口只保留抬头一处，空态文案按权限指向它。
+const emptyText = computed(() => {
+  if (library.query) return '换个关键词，或清除搜索条件。'
+  return auth.isAdmin
+    ? '点右上角「上传文档」，也可以把文件直接拖到这里。'
+    : '等管理员上传第一份文档，这里就会有内容。'
+})
 
 function statusClass(doc) {
   if (!doc) return ''
@@ -153,6 +187,7 @@ function onFilePick(event) {
 }
 
 function onDrop(event) {
+  if (!auth.isAdmin) return
   dragging.value = false
   handleUpload(event.dataTransfer?.files)
 }
@@ -221,10 +256,10 @@ onBeforeUnmount(() => {
           <span class="head-count mono">{{ formatNumber(docTotal) }} 篇 · {{ formatNumber(totalChunks) }} 片</span>
         </h1>
       </div>
-      <div class="head-actions">
+      <div v-if="auth.isAdmin" class="head-actions">
         <button type="button" class="btn ghost" :disabled="library.syncing" @click="syncLibrary">
-          <Icon name="sync" :size="13" :class="{ spin: library.syncing }" />
-          {{ library.syncing ? '同步中' : '同步' }}
+          <Icon name="sync" :size="13" />
+          {{ library.syncing ? '同步中…' : '同步' }}
         </button>
         <button type="button" class="btn solid" @click="openUploader">
           <Icon name="upload" :size="13" />
@@ -260,25 +295,26 @@ onBeforeUnmount(() => {
           </label>
 
           <div class="facet-row">
-            <button
-              v-for="facet in library.FACETS"
-              :key="facet.key || 'all'"
-              type="button"
-              class="facet mono"
-              :class="{ 'is-on': library.type === facet.key }"
-              @click="pickType(facet.key)"
-            >
-              {{ facet.label }}
-              <span class="facet-count">{{ facets[facet.key || 'all'] ?? 0 }}</span>
-            </button>
+            <template v-for="(facet, index) in facetList" :key="facet.key || 'all'">
+              <span v-if="index" class="facet-sep" aria-hidden="true">·</span>
+              <button
+                type="button"
+                class="facet"
+                :class="{ 'is-on': library.type === facet.key }"
+                @click="pickType(facet.key)"
+              >
+                {{ facet.label }}
+                <span class="facet-count mono">{{ facet.count }}</span>
+              </button>
+            </template>
           </div>
 
           <div class="sort-row">
-            <select class="mini-select mono" :value="library.sort" aria-label="排序方式" @change="onSort">
+            <select :value="library.sort" aria-label="排序方式" @change="onSort">
               <option value="uploaded">按入库时间</option>
               <option value="name">按名称</option>
             </select>
-            <select class="mini-select mono" :value="library.pageSize" aria-label="每页数量" @change="onPageSize">
+            <select :value="library.pageSize" aria-label="每页数量" @change="onPageSize">
               <option :value="10">10 / 页</option>
               <option :value="20">20 / 页</option>
               <option :value="50">50 / 页</option>
@@ -290,11 +326,11 @@ onBeforeUnmount(() => {
 
         <div
           class="list-scroll"
-          @dragover.prevent="dragging = true"
+          @dragover.prevent="dragging = auth.isAdmin"
           @dragleave.prevent="dragging = false"
           @drop.prevent="onDrop"
         >
-          <div v-if="library.uploads.length" class="upload-panel">
+          <div v-if="library.uploads.length" class="card card--flat upload-panel">
             <div class="upload-head">
               <span class="mono">上传队列</span>
               <button type="button" class="link-btn mono" @click="library.clearFinishedUploads()">清除已完成</button>
@@ -324,8 +360,8 @@ onBeforeUnmount(() => {
             <span v-for="n in 6" :key="n" class="skeleton row" />
           </div>
 
-          <div v-else-if="library.status === 'error'" class="pane-state">
-            <p class="mono state-tag">LOAD FAILED</p>
+          <div v-else-if="library.status === 'error'" class="pane-state state-block">
+            <p class="state-title">列表加载失败</p>
             <p class="state-text">{{ library.error }}</p>
             <button type="button" class="btn ghost" @click="library.fetchDocuments()">
               <Icon name="refresh" :size="13" />
@@ -333,16 +369,11 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div v-else-if="!docs.length" class="pane-state">
-            <p class="mono state-tag">{{ library.query ? 'NO MATCH' : 'EMPTY SHELF' }}</p>
-            <p class="state-text">
-              {{ library.query ? '没有找到匹配的档案，换个关键词试试。' : '知识库还是空的。上传第一份校务文档，星图会随之点亮。' }}
-            </p>
-            <button v-if="!library.query" type="button" class="btn ghost" @click="openUploader">
-              <Icon name="upload" :size="13" />
-              上传文档
-            </button>
-            <button v-else type="button" class="btn ghost" @click="clearSearch">清除搜索</button>
+          <div v-else-if="!docs.length" class="pane-state state-block">
+            <p class="state-title">{{ library.query ? '没有匹配的文档' : '知识库还是空的' }}</p>
+            <p class="state-text">{{ emptyText }}</p>
+            <p v-if="!library.query && auth.isAdmin" class="state-note">单份 ≤ 50MB · Markdown / 文本 / PDF / Word</p>
+            <button v-if="library.query" type="button" class="link-btn" @click="clearSearch">清除搜索</button>
           </div>
 
           <ul v-else class="doc-list">
@@ -356,9 +387,17 @@ onBeforeUnmount(() => {
                 <span class="doc-type mono" :data-type="doc.file_type">{{ TYPE_LABEL[doc.file_type] || 'FILE' }}</span>
                 <span class="doc-main">
                   <span class="doc-name">{{ shortDocTitle(doc.original_name || doc.file_name, 40) }}</span>
-                  <span class="doc-meta mono">{{ docSubtitle(doc) }} · {{ formatTime(doc.ingested_at || doc.created_at) }}</span>
+                  <span class="doc-meta mono">
+                    <span
+                      v-if="showStatusDot"
+                      class="doc-status"
+                      :class="statusClass(doc)"
+                      role="img"
+                      :title="stageText(doc)"
+                      :aria-label="stageText(doc)"
+                    />{{ docSubtitle(doc) }} · {{ formatTime(doc.ingested_at || doc.created_at) }}
+                  </span>
                 </span>
-                <span class="doc-status" :class="statusClass(doc)" role="img" :title="stageText(doc)" :aria-label="stageText(doc)" />
               </button>
             </li>
           </ul>
@@ -367,18 +406,17 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="list-foot">
-          <button type="button" class="pager" :disabled="library.page <= 1" aria-label="上一页" @click="library.setPage(library.page - 1)">
-            <Icon name="chevronLeft" :size="12" />
+          <button type="button" class="pager" :disabled="library.page <= 1" @click="library.setPage(library.page - 1)">
+            ‹ 上一页
           </button>
-          <span class="mono page-label">{{ library.page }} / {{ library.pageCount }}</span>
+          <span class="mono pager-count">{{ library.page }} / {{ library.pageCount }}</span>
           <button
             type="button"
             class="pager"
             :disabled="library.page >= library.pageCount"
-            aria-label="下一页"
             @click="library.setPage(library.page + 1)"
           >
-            <Icon name="chevronRight" :size="12" />
+            下一页 ›
           </button>
           <span class="spacer" />
           <span v-if="library.lastSyncedAt" class="mono foot-note">同步于 {{ formatTime(library.lastSyncedAt) }}</span>
@@ -405,6 +443,7 @@ onBeforeUnmount(() => {
                 <Icon name="atlas" :size="15" />
               </RouterLink>
               <button
+                v-if="auth.isAdmin"
                 type="button"
                 class="icon-btn danger"
                 title="删除文档"
@@ -414,6 +453,20 @@ onBeforeUnmount(() => {
                 <Icon name="trash" :size="15" />
               </button>
             </div>
+          </div>
+
+          <div v-if="auth.isAdmin" class="visibility-control">
+            <label for="doc-visibility">访问范围</label>
+            <select
+              id="doc-visibility"
+              :value="activeDoc.visibility || 'admin'"
+              :disabled="visibilityBusy"
+              @change="setVisibility"
+            >
+              <option value="admin">仅管理员可见</option>
+              <option value="public">全体登录用户可见</option>
+            </select>
+            <span>查看、AI 检索与星图同步生效</span>
           </div>
 
           <dl class="meta-grid">
@@ -427,10 +480,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="meta-cell">
               <dt class="mono">状态</dt>
-              <dd class="status-cell" :class="statusClass(activeDoc)">
-                <span class="doc-status" :class="statusClass(activeDoc)" />
-                {{ stageText(activeDoc) }}
-              </dd>
+              <dd class="status-cell" :class="statusClass(activeDoc)">{{ stageText(activeDoc) }}</dd>
             </div>
             <div class="meta-cell">
               <dt class="mono">入库</dt>
@@ -459,9 +509,9 @@ onBeforeUnmount(() => {
                 aria-label="上一页分片"
                 @click="library.setChunkPage(library.chunkPage - 1)"
               >
-                <Icon name="chevronLeft" :size="12" />
+                ‹ 上一页
               </button>
-              <span class="mono">{{ library.chunkPage }} / {{ library.chunkPageCount }}</span>
+              <span class="mono pager-count">{{ library.chunkPage }} / {{ library.chunkPageCount }}</span>
               <button
                 type="button"
                 class="pager"
@@ -469,15 +519,15 @@ onBeforeUnmount(() => {
                 aria-label="下一页分片"
                 @click="library.setChunkPage(library.chunkPage + 1)"
               >
-                <Icon name="chevronRight" :size="12" />
+                下一页 ›
               </button>
             </div>
           </div>
 
-          <div v-if="library.chunkStatus === 'error'" class="pane-state inline">
-            <p class="mono state-tag">CHUNK LOAD FAILED</p>
+          <div v-if="library.chunkStatus === 'error'" class="pane-state state-block">
+            <p class="state-title">分片加载失败</p>
             <p class="state-text">{{ library.chunkError }}</p>
-            <button type="button" class="btn ghost" @click="library.loadChunks(library.chunkPage)">重试</button>
+            <button type="button" class="link-btn" @click="library.loadChunks(library.chunkPage)">重试</button>
           </div>
 
           <div v-else-if="library.chunkStatus === 'loading' && !library.chunks.length" class="chunk-skeletons">
@@ -509,24 +559,16 @@ onBeforeUnmount(() => {
             </li>
           </ol>
 
-          <div v-else class="pane-state inline">
-            <p class="mono state-tag">NO CHUNKS</p>
+          <div v-else class="pane-state state-block">
+            <p class="state-title">没有读到分片</p>
             <p class="state-text">登记表显示这份文档已入库，但 Milvus 中没有读到分片。可以尝试「同步」重建登记。</p>
           </div>
         </template>
 
-        <div v-else class="detail-empty">
-          <img class="empty-seal" :src="sealUrl" alt="江西师范大学校徽" width="52" height="43" />
-          <h2 class="empty-title">档案室</h2>
-          <p class="empty-text">
-            左侧是知识库里的全部文档。选一份，查看它的元数据和每一个分片；
-            或者把 .md / .txt / .pdf / .docx 拖进这里入库。
-          </p>
-          <button type="button" class="btn solid" @click="openUploader">
-            <Icon name="upload" :size="13" />
-            选择文档
-          </button>
-          <p class="mono empty-note">单份 ≤ 50MB · 支持 Markdown / 文本 / PDF / Word</p>
+        <div v-else class="detail-empty state-block" data-align="center">
+          <img class="empty-seal" :src="sealUrl" alt="江西师范大学校徽" width="40" height="33" />
+          <h2 class="state-title">档案室</h2>
+          <p class="state-text">选择左侧的一份文档，查看它的元数据与每一个分片。</p>
         </div>
       </section>
     </div>
@@ -534,6 +576,34 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.visibility-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.visibility-control label {
+  color: var(--ink-2);
+}
+
+.visibility-control select {
+  padding: 5px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.visibility-control span {
+  color: var(--ink-4);
+}
+
 .archive {
   display: flex;
   flex-direction: column;
@@ -551,31 +621,19 @@ onBeforeUnmount(() => {
   padding: 22px 0 16px;
 }
 
+/* 标题字号由全局 .head-title 决定，这里只负责标题与计数的基线对齐。 */
 .head-title {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 2px 0 0;
-  font-family: var(--font-serif);
-  font-size: 17px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
 }
 
 .head-count {
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.08em;
   color: var(--ink-3);
-}
-
-.head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.spin {
-  animation: spin 1.1s linear infinite;
 }
 
 .archive-body {
@@ -598,11 +656,28 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--line);
 }
 
+.clear {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-full);
+  color: var(--ink-4);
+  transition: color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
+}
+
+.clear:hover {
+  color: var(--ink);
+  background: var(--surface-3);
+}
+
+/* 类型筛选：一行文字，用间隔点分开；计数为 0 的类型不渲染。 */
 .facet-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin-top: 10px;
+  align-items: center;
+  margin-top: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .facet-row::-webkit-scrollbar {
@@ -610,84 +685,66 @@ onBeforeUnmount(() => {
 }
 
 .facet {
-  display: inline-flex;
-  align-items: center;
   flex: 0 0 auto;
-  gap: 4px;
-  height: 22px;
-  padding: 0 7px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  font-size: 11px;
-  letter-spacing: 0.03em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: var(--text-sm);
   color: var(--ink-3);
-  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+  transition: color var(--t-fast) var(--ease-out);
 }
 
 .facet:hover {
   color: var(--ink);
-  border-color: var(--line-strong);
 }
 
 .facet.is-on {
-  color: var(--accent);
-  border-color: var(--accent-line);
-  background: var(--accent-soft);
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
 }
 
 .facet-count {
-  opacity: 0.6;
+  font-size: var(--text-xs);
+  color: var(--ink-4);
+}
+
+.facet-sep {
+  flex: 0 0 auto;
+  padding: 0 7px;
+  color: var(--line-strong);
 }
 
 .sort-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 14px;
   margin-top: 10px;
 }
 
-.mini-select {
-  height: 26px;
-  padding: 0 20px 0 2px;
+/* 排序与每页数量用系统选择器：不加自定义箭头与描边。 */
+.sort-row select {
+  padding: 0 2px 0 0;
   border: 0;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  color: var(--ink-2);
-  background-color: transparent;
-  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
-    linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: calc(100% - 12px) 11px, calc(100% - 8px) 11px;
-  background-size: 4px 4px, 4px 4px;
-  background-repeat: no-repeat;
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
   cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  transition: border-color var(--t-fast), color var(--t-fast);
+  transition: color var(--t-fast) var(--ease-out);
 }
 
-.mini-select:hover {
-  border-bottom-color: var(--ink-3);
+.sort-row select:hover {
   color: var(--ink);
 }
 
-.mini-select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.mini-select option {
+.sort-row select option {
   background: var(--surface);
   color: var(--ink);
 }
 
-.spacer {
-  flex: 1;
-}
-
 .result-count {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--ink-4);
 }
 
@@ -702,19 +759,23 @@ onBeforeUnmount(() => {
 .doc-list {
   list-style: none;
   margin: 0;
-  padding: 6px 8px;
+  padding: 0;
+}
+
+/* 行与行之间只留一条 --line 细线，不做逐行卡片。 */
+.doc-list li + li {
+  border-top: 1px solid var(--line);
 }
 
 .doc-row {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 8px;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 14px;
   width: 100%;
-  padding: 11px 10px;
-  border-radius: var(--r-sm);
+  padding: 13px 16px;
   text-align: left;
-  transition: background var(--t-fast);
+  transition: background var(--t-fast) var(--ease-out);
 }
 
 .doc-row:hover {
@@ -722,12 +783,12 @@ onBeforeUnmount(() => {
 }
 
 .doc-row.is-active {
-  background: var(--surface-2);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 var(--accent);
 }
 
 .doc-type {
-  font-size: 11px;
+  font-size: var(--text-2xs);
   letter-spacing: 0.08em;
   color: var(--ink-3);
   padding: 3px 0;
@@ -743,13 +804,13 @@ onBeforeUnmount(() => {
 
 .doc-main {
   display: grid;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
 }
 
 .doc-name {
   font-family: var(--font-serif);
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.45;
   color: var(--ink);
   overflow: hidden;
@@ -760,8 +821,8 @@ onBeforeUnmount(() => {
 }
 
 .doc-meta {
-  font-size: 11px;
-  letter-spacing: 0.03em;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
   color: var(--ink-4);
   white-space: nowrap;
   overflow: hidden;
@@ -769,9 +830,12 @@ onBeforeUnmount(() => {
 }
 
 .doc-status {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: var(--r-full);
+  vertical-align: 1px;
   background: var(--ink-4);
 }
 
@@ -781,7 +845,6 @@ onBeforeUnmount(() => {
 
 .doc-status.busy {
   background: var(--warn);
-  animation: pulse 1.4s ease-in-out infinite;
 }
 
 .doc-status.err {
@@ -789,11 +852,8 @@ onBeforeUnmount(() => {
 }
 
 .upload-panel {
-  margin: 10px 10px 4px;
-  padding: 10px 12px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--surface);
+  margin: 12px 16px 4px;
+  padding: 12px 14px;
 }
 
 .upload-head {
@@ -801,7 +861,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.12em;
   color: var(--ink-3);
 }
@@ -827,7 +887,7 @@ onBeforeUnmount(() => {
 }
 
 .upload-state {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--ink-3);
   letter-spacing: 0.04em;
 }
@@ -839,6 +899,7 @@ onBeforeUnmount(() => {
 .upload-track {
   height: 2px;
   margin-top: 6px;
+  border-radius: var(--r-full);
   background: var(--line);
   overflow: hidden;
 }
@@ -846,54 +907,56 @@ onBeforeUnmount(() => {
 .upload-fill {
   display: block;
   height: 100%;
+  border-radius: var(--r-full);
   background: var(--accent);
-  transition: width 320ms var(--ease-out);
+  transition: width var(--t-base) var(--ease-out);
 }
 
 .upload-error {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--err);
 }
 
 .upload-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-full);
   color: var(--ink-4);
+  transition: color var(--t-fast) var(--ease-out), background var(--t-fast) var(--ease-out);
+}
+
+.upload-close:hover {
+  color: var(--ink);
+  background: var(--surface-3);
 }
 
 .row-skeletons {
   display: grid;
   gap: 10px;
-  padding: 14px;
+  padding: 14px 16px;
 }
 
 .row-skeletons .row {
   height: 44px;
 }
 
+/* 空态沿用全局 .state-block 的节奏，这里只补内外边距。 */
 .pane-state {
-  display: grid;
-  justify-items: start;
-  gap: 10px;
-  padding: 34px 22px;
+  padding: 32px 16px;
 }
 
-.pane-state.inline {
-  padding: 26px 4px;
+.detail-pane .pane-state {
+  padding: 28px 0;
 }
 
-.state-tag {
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: 0.2em;
-  color: var(--accent);
-}
-
-.state-text {
-  margin: 0;
-  max-width: 42ch;
+.state-note {
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: 1.85;
-  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
 }
 
 .drop-veil {
@@ -902,36 +965,58 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   border: 1px dashed var(--accent);
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.18em;
-  border-radius: var(--r-sm);
 }
 
 .list-foot {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: 12px;
+  padding: 12px 16px 16px;
   border-top: 1px solid var(--line);
 }
 
-.page-label {
-  font-size: 11px;
+/* 唯一的翻页控件：安静的文字，到头即禁用。 */
+.pager {
+  flex: 0 0 auto;
+  padding: 2px 0;
+  font-size: var(--text-sm);
   color: var(--ink-3);
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+.pager:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.pager:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pager-count {
+  font-size: var(--text-xs);
+  color: var(--ink-4);
 }
 
 .foot-note {
-  font-size: 11px;
+  min-width: 0;
+  font-size: var(--text-xs);
   color: var(--ink-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .detail-pane {
   min-width: 0;
   overflow-y: auto;
-  padding: 20px clamp(18px, 2.6vw, 38px) 48px;
+  padding: 22px clamp(20px, 2.4vw, 34px) 56px;
 }
 
 .detail-head {
@@ -952,9 +1037,9 @@ onBeforeUnmount(() => {
 }
 
 .detail-title h2 {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   font-family: var(--font-serif);
-  font-size: clamp(20px, 2.2vw, 27px);
+  font-size: clamp(20px, 2.2vw, 26px);
   font-weight: 500;
   line-height: 1.35;
   letter-spacing: 0.01em;
@@ -963,16 +1048,16 @@ onBeforeUnmount(() => {
 
 .detail-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
 }
 
 .meta-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
-  margin: 18px 0 0;
+  margin: 20px 0 0;
   background: var(--line);
-  border: 1px solid var(--line);
+  border-block: 1px solid var(--line);
 }
 
 .meta-cell {
@@ -985,7 +1070,7 @@ onBeforeUnmount(() => {
 }
 
 .meta-cell dt {
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.16em;
   color: var(--ink-4);
 }
@@ -996,10 +1081,8 @@ onBeforeUnmount(() => {
   color: var(--ink-2);
 }
 
-.status-cell {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.status-cell.busy {
+  color: var(--warn);
 }
 
 .status-cell.err {
@@ -1013,7 +1096,7 @@ onBeforeUnmount(() => {
 }
 
 .fingerprint code {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--ink-2);
   word-break: break-all;
 }
@@ -1026,12 +1109,13 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 26px 0 10px;
+  gap: 12px;
+  margin: 28px 0 10px;
 }
 
 .chunk-label {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--text-xs);
   letter-spacing: 0.18em;
   color: var(--ink-3);
 }
@@ -1039,9 +1123,7 @@ onBeforeUnmount(() => {
 .chunk-pager {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--ink-3);
+  gap: 10px;
 }
 
 .chunk-list {
@@ -1066,7 +1148,7 @@ onBeforeUnmount(() => {
 
 .chunk-no {
   flex: 0 0 52px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--ink-4);
   letter-spacing: 0.04em;
 }
@@ -1092,7 +1174,7 @@ onBeforeUnmount(() => {
 .chunk-tags {
   display: inline-flex;
   gap: 10px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--ink-4);
 }
 
@@ -1106,7 +1188,7 @@ onBeforeUnmount(() => {
 }
 
 .chunk.is-target {
-  background: rgba(226, 104, 76, 0.07);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
   box-shadow: inset 2px 0 var(--accent);
 }
 
@@ -1142,56 +1224,12 @@ onBeforeUnmount(() => {
 }
 
 .detail-empty {
-  display: grid;
-  justify-items: center;
-  gap: 12px;
-  max-width: 420px;
-  margin: clamp(40px, 12vh, 120px) auto 0;
-  text-align: center;
+  gap: 14px;
+  margin: clamp(48px, 14vh, 132px) auto 0;
 }
 
-.empty-figure {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 92px;
-  height: 92px;
-  color: var(--ink-3);
-}
-
-.empty-figure .ring {
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 50%;
-}
-
-.empty-figure .ring-2 {
-  inset: 14px;
-  border-style: dashed;
-  opacity: 0.7;
-}
-
-.empty-title {
-  margin: 8px 0 0;
-  font-family: var(--font-serif);
-  font-size: 26px;
-  font-weight: 400;
-  letter-spacing: 0.06em;
-}
-
-.empty-text {
-  margin: 0;
-  font-size: var(--text-xs);
-  line-height: 1.9;
-  color: var(--ink-3);
-}
-
-.empty-note {
-  margin: 4px 0 0;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: var(--ink-4);
+.empty-seal {
+  opacity: 0.92;
 }
 
 @media (max-width: 1080px) {
@@ -1207,19 +1245,6 @@ onBeforeUnmount(() => {
 @media (max-width: 900px) {
   .archive-body {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .facet-row {
-    flex-wrap: wrap;
-    gap: 6px 8px;
-  }
-
-  .facet-row::-webkit-scrollbar {
-    display: none;
-  }
-
-  .facet {
-    flex: 0 0 auto;
   }
 
   .list-pane {

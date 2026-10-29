@@ -1,3 +1,4 @@
+from langgraph.runtime import Runtime
 
 import re
 import time
@@ -101,7 +102,12 @@ def create_nodes(
             "total_tokens": 0,
         }
 
-    def llm_node(state: AgentState) -> AgentState:
+    def llm_node(state: AgentState, runtime: Runtime = None) -> AgentState:
+
+        current_model = (runtime.context or {}).get("model") if runtime is not None else None
+        current_model = current_model or model
+        if current_model is None:
+            raise RuntimeError("未配置对话模型，请联系管理员")
 
         summary = state.get("summary")
         system_text = (
@@ -139,15 +145,27 @@ def create_nodes(
         token_usage = None
 
         # 摘要放系统消息里，历史窗口从 summary_upto 起，前端拿到的完整历史不受影响
-        messages = [system_message, *state["messages"][state.get("summary_upto", 0):]]
+        history = state["messages"][state.get("summary_upto", 0):]
+        # Prior checkpoints predate provenance and were produced by DeepSeek.
+        # Preserve same-provider thinking; don't replay another provider's
+        # private reasoning as though it belonged to the active provider.
+        provider_id = getattr(current_model, "provider_id", None)
+        if not isinstance(provider_id, str):
+            provider_id = None
+        last_user = next((i for i in range(len(history) - 1, -1, -1) if history[i].role == "user"), 0)
+        history = [m.model_copy(update={"reasoning": None})
+                   if (i < last_user and m.reasoning and provider_id
+                       and (m.reasoning_provider or "deepseek") != provider_id) else m
+                   for i, m in enumerate(history)]
+        messages = [system_message, *history]
 
         stream_kwargs = {
             "messages": messages,
             "tools": registry.get_schemas(),
-            **model.reasoning_kwargs(state.get("reasoning")),
+            **current_model.reasoning_kwargs(state.get("reasoning")),
         }
 
-        events = model.stream(**stream_kwargs)
+        events = current_model.stream(**stream_kwargs)
 
         for event in events:
             event_type = event.get("type")
@@ -198,6 +216,8 @@ def create_nodes(
             content=[{"type": "text", "text": response.content}],
             tool_calls=response.tool_calls,
             token_usage=response.token_usage,
+            reasoning=response.reasoning,
+            reasoning_provider=provider_id,
         )
 
         return {
@@ -207,7 +227,7 @@ def create_nodes(
             "total_tokens": _add_total(state.get("total_tokens"), response.token_usage),  # ← 新增
         }
 
-    def tool_node(state: AgentState) -> AgentState:
+    def tool_node(state: AgentState, runtime: Runtime = None) -> AgentState:
         writer = get_stream_writer()
         tool_calls = state["last_response"].tool_calls
 
@@ -221,7 +241,12 @@ def create_nodes(
             )
 
             start = time.perf_counter()
-            outcome = execute_tool(registry, tool_call)
+            from auth.policy import principal
+            token = principal.set((runtime.context or {}).get("principal") if runtime else None)
+            try:
+                outcome = execute_tool(registry, tool_call)
+            finally:
+                principal.reset(token)
             elapsed = time.perf_counter() - start
 
             writer(

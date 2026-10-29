@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_kb_docs_status  ON kb_documents (status);
 """
 
 _COLUMNS = """
-    file_md5, file_name, original_name, file_type, file_size,
+    file_md5, file_name, original_name, file_type, file_size, visibility,
     status, stage, error, chunk_count, source_path,
     created_at, updated_at, ingested_at
 """
@@ -52,6 +52,8 @@ class KbDocumentRepository:
     def setup(self) -> None:
         with self._conn.cursor() as cur:
             cur.execute(_SCHEMA)
+            cur.execute("ALTER TABLE kb_documents ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public','admin'))")
+            cur.execute("ALTER TABLE kb_documents ALTER COLUMN visibility SET DEFAULT 'admin'")
         self._conn.commit()
 
     def get(self, file_md5: str) -> dict[str, Any] | None:
@@ -160,8 +162,9 @@ class KbDocumentRepository:
         page: int = 1,
         page_size: int = 10,
         sort: str = "uploaded",
+        public_only: bool = False,
     ) -> tuple[list[dict[str, Any]], int]:
-        conditions = []
+        conditions = ["visibility = 'public' AND status = 'ready'"] if public_only else []
         params: list[Any] = []
         if q.strip():
             pattern = _like(q.strip())
@@ -196,7 +199,7 @@ class KbDocumentRepository:
 
         return rows, total
 
-    def facets(self, q: str = "") -> dict[str, int]:
+    def facets(self, q: str = "", *, public_only: bool = False) -> dict[str, int]:
         """各格式的文档数。只受搜索词影响，不受当前格式筛选影响。"""
         params: list[Any] = []
         where = ""
@@ -205,6 +208,8 @@ class KbDocumentRepository:
             where = "WHERE (file_name ILIKE %s ESCAPE '\\' OR coalesce(original_name, '') ILIKE %s ESCAPE '\\')"
             params.extend([pattern, pattern])
 
+        if public_only:
+            where += (" AND " if where else "WHERE ") + "visibility = 'public' AND status = 'ready'"
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 f"""
@@ -230,7 +235,7 @@ class KbDocumentRepository:
             # 连接池统一配了 dict_row，这里按列名取；兼容元组行也顺手处理
             return int(row["n"]) if isinstance(row, dict) else int(row[0])
 
-    def overview(self) -> dict[str, Any]:
+    def overview(self, *, public_only: bool = False) -> dict[str, Any]:
         """知识库总览：文档数、分片总数、状态分布、最近入库时间。
 
         分片总数只能求和登记表里的 chunk_count —— Milvus 侧逐文档 count(*) 太慢，
@@ -249,7 +254,7 @@ class KbDocumentRepository:
                     coalesce(sum(file_size), 0) AS bytes,
                     max(coalesce(ingested_at, created_at)) AS latest_at
                 FROM kb_documents
-                """
+                """ + (" WHERE visibility = 'public' AND status = 'ready'" if public_only else "")
             )
             row = cur.fetchone()
         return {
@@ -291,8 +296,8 @@ class KbDocumentRepository:
                     """
                     INSERT INTO kb_documents
                         (file_md5, file_name, original_name, file_type, file_size,
-                         status, chunk_count, ingested_at)
-                    VALUES (%s, %s, NULL, %s, %s, 'ready', %s, now())
+                         status, chunk_count, ingested_at, visibility)
+                    VALUES (%s, %s, NULL, %s, %s, 'ready', %s, now(), 'public')
                     ON CONFLICT (file_md5) DO NOTHING
                     """,
                     (

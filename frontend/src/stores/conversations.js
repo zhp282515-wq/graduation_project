@@ -39,6 +39,7 @@ function emptyRun() {
 
 export const useConversationStore = defineStore('conversation', () => {
   const ui = useUiStore()
+  let generation = 0
 
   const sessions = ref([])
   const sessionsStatus = ref('idle')
@@ -55,6 +56,8 @@ export const useConversationStore = defineStore('conversation', () => {
    */
   const runs = reactive({})
   const controllers = new Map()
+  // 接口历史不包含工具轨迹；在当前页面生命周期内，按会话和回答 id 保留各轮快照。
+  const completedTraces = new Map()
 
   function runKey(sessionId) {
     return sessionId || DRAFT_KEY
@@ -88,7 +91,9 @@ export const useConversationStore = defineStore('conversation', () => {
 
   const busy = computed(() => Boolean(run.value?.active))
 
-  const liveTurn = computed(() => turns.value.find((turn) => turn.live) || null)
+  const liveTurn = computed(() =>
+    run.value.active ? turns.value.find((turn) => turn.key === run.value.targetKey) || null : null,
+  )
 
   /** 哪些会话正在后台生成——会话档案里给它们加个呼吸点。 */
   const runningIds = computed(() =>
@@ -113,6 +118,7 @@ export const useConversationStore = defineStore('conversation', () => {
       sessionsStatus.value = 'ready'
       return sessions.value
     } catch (error) {
+      if (isAbortError(error)) return []
       sessionsStatus.value = 'error'
       sessionsError.value = error?.message || '会话列表加载失败'
       if (!silent) ui.notify(sessionsError.value, 'err')
@@ -157,17 +163,32 @@ export const useConversationStore = defineStore('conversation', () => {
       if (activeId.value !== sessionId) return
       const built = buildTurns(messages)
       const state = runs[runKey(sessionId)]
-      if (state?.active && state.turn && !built.some((turn) => turn.key === state.turn.key)) {
+      const traces = completedTraces.get(sessionId)
+      for (const turn of built) {
+        const trace = traces?.get(turn.assistant?.id)
+        if (trace) turn.trace = trace
+      }
+      if (state?.active && state.turn) {
+        const currentIndex = built.findIndex((turn) =>
+          turn.key === state.targetKey ||
+          (state.turn.userId != null && turn.userId === state.turn.userId) ||
+          (state.messageId != null && turn.assistant?.id === state.messageId),
+        )
         // 服务端已经先落了 user 消息，这里用正在流式的那一轮替换掉「等待回应」的占位，避免同一问题出现两次。
         const tail = built[built.length - 1]
         const sameQuestion =
           tail &&
           !tail.assistant?.text &&
           (tail.userText || '') === (state.turn.userText || '')
-        if (sameQuestion) built.pop()
         const turn = state.turn
-        turn.index = built.length + 1
-        built.push(turn)
+        if (currentIndex >= 0) {
+          turn.index = built[currentIndex].index
+          built.splice(currentIndex, 1, turn)
+        } else {
+          if (sameQuestion) built.pop()
+          turn.index = built.length + 1
+          built.push(turn)
+        }
       }
       turns.value = built
       historyStatus.value = 'ready'
@@ -204,8 +225,10 @@ export const useConversationStore = defineStore('conversation', () => {
   }
 
   async function ensureSession() {
+    const epoch = generation
     if (activeId.value) return activeId.value
     const created = await createSession()
+    if (epoch !== generation) throw Object.assign(new Error('账号已切换'), { name: 'AbortError' })
     const id = created?.id || created?.session_id
     if (!id) throw new Error('创建会话失败：后端没有返回会话 id')
     activeId.value = id
@@ -250,6 +273,29 @@ export const useConversationStore = defineStore('conversation', () => {
     return findTurn(state.targetKey)?.assistant || null
   }
 
+  function ownsTurn(state) {
+    const current = runs[runKey(state.sessionId)]
+    return current === state || current?.turn !== state.turn
+  }
+
+  function saveTurnTrace(state) {
+    if (!state.turn || !ownsTurn(state)) return
+    state.turn.live = false
+    state.turn.trace = {
+      reasoning: state.reasoning,
+      steps: state.steps.map((step) => ({ ...step, sources: [...step.sources] })),
+      phase: state.phase,
+      error: state.error,
+      finishReason: state.finishReason,
+      elapsedMs: state.elapsedMs,
+    }
+    const assistant = assistantOf(state)
+    if (state.saved && assistant?.id != null && runs[runKey(state.sessionId)] === state) {
+      if (!completedTraces.has(state.sessionId)) completedTraces.set(state.sessionId, new Map())
+      completedTraces.get(state.sessionId).set(assistant.id, state.turn.trace)
+    }
+  }
+
   function stepFor(state, toolCallId, name) {
     let step = state.steps.find(
       (item) =>
@@ -279,8 +325,10 @@ export const useConversationStore = defineStore('conversation', () => {
     return [...map.values()]
   }
 
-  function handleEvent(event, sessionId) {
-    const state = runFor(sessionId)
+  function handleEvent(event, state) {
+    // 停止、重试或切换轮次后，旧连接残留的数据不能写入新的运行状态。
+    if (runs[runKey(state.sessionId)] !== state || !state.active || state.saved ||
+      state.phase === 'failed' || state.phase === 'aborted') return
     const type = event?.type
     if (type === 'run_started') {
       state.phase = 'thinking'
@@ -376,8 +424,9 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   }
 
-  function beginRun(state, sessionId, operation) {
-    resetRun(state)
+  function beginRun(sessionId, operation) {
+    const state = reactive(emptyRun())
+    runs[runKey(sessionId)] = state
     state.sessionId = sessionId
     state.active = true
     state.phase = 'connecting'
@@ -386,7 +435,7 @@ export const useConversationStore = defineStore('conversation', () => {
     startTicker()
     const controller = new AbortController()
     controllers.set(runKey(sessionId), controller)
-    return controller
+    return { state, controller }
   }
 
   async function settleRun(state, sessionId) {
@@ -394,13 +443,15 @@ export const useConversationStore = defineStore('conversation', () => {
     state.elapsedMs = state.endedAt ? state.endedAt - state.startedAt : Date.now() - state.startedAt
     state.endedAt = state.endedAt || Date.now()
     const assistant = assistantOf(state)
-    if (assistant) assistant.streaming = false
-    controllers.delete(runKey(sessionId))
+    if (assistant && ownsTurn(state)) assistant.streaming = false
+    saveTurnTrace(state)
+    if (runs[runKey(sessionId)] === state) controllers.delete(runKey(sessionId))
     if (!Object.values(runs).some((item) => item.active)) stopTicker()
-    await fetchSessions({ silent: true })
+    if (runs[runKey(sessionId)] === state) await fetchSessions({ silent: true })
   }
 
   async function send({ text, images = [], reasoning = null, autoRename = true }) {
+    const epoch = generation
     const trimmed = String(text || '').trim()
     if (!trimmed && !images.length) return
     if (busy.value) return
@@ -409,14 +460,12 @@ export const useConversationStore = defineStore('conversation', () => {
     try {
       sessionId = await ensureSession()
     } catch (error) {
-      ui.notify(error?.message || '创建会话失败', 'err')
+      if (!isAbortError(error)) ui.notify(error?.message || '创建会话失败', 'err')
       return
     }
 
-    const state = runFor(sessionId)
-    if (state.active) return
-
-    const controller = beginRun(state, sessionId, 'send')
+    if (epoch !== generation || runFor(sessionId).active) return
+    const { state, controller } = beginRun(sessionId, 'send')
     const turn = attachLiveTurn(state, { text: trimmed, images })
     state.targetKey = turn.key
 
@@ -427,14 +476,14 @@ export const useConversationStore = defineStore('conversation', () => {
         images,
         reasoning,
         signal: controller.signal,
-        onEvent: (event) => handleEvent(event, sessionId),
+        onEvent: (event) => handleEvent(event, state),
       })
-      if (state.phase === 'connecting') {
+      if (!state.saved && state.phase !== 'failed' && state.phase !== 'aborted') {
         state.phase = 'failed'
         state.error = '连接已中断，未收到本轮完成结果，请稍后重试'
       }
     } catch (error) {
-      if (isAbortError(error)) {
+      if (controller.signal.aborted || isAbortError(error)) {
         state.phase = 'aborted'
         state.error = '已停止生成，这一段回答没有保存'
       } else {
@@ -446,7 +495,7 @@ export const useConversationStore = defineStore('conversation', () => {
     } finally {
       await settleRun(state, sessionId)
       if (state.phase === 'failed' && activeId.value === sessionId) ui.notify(state.error, 'err')
-      if (autoRename) ui.markVisited(sessionId)
+      if (autoRename && runs[runKey(sessionId)] === state) ui.markVisited(sessionId)
     }
   }
 
@@ -459,28 +508,28 @@ export const useConversationStore = defineStore('conversation', () => {
       return
     }
     if (!sessionId) return
-    const state = runFor(sessionId)
-    if (state.active) return
+    if (runFor(sessionId).active) return
 
-    const previousText = assistant.text
-    const controller = beginRun(state, sessionId, 'regenerate')
+    const previousAnswer = { ...assistant }
+    const { state, controller } = beginRun(sessionId, 'regenerate')
     state.targetKey = turnKey
     state.turn = turn
     state.messageId = assistant.id
+    turn.live = true
 
     try {
       await regenerateChat({
         sessionId,
         messageId: assistant.id,
         signal: controller.signal,
-        onEvent: (event) => handleEvent(event, sessionId),
+        onEvent: (event) => handleEvent(event, state),
       })
-      if (state.phase === 'connecting') {
+      if (!state.saved && state.phase !== 'failed' && state.phase !== 'aborted') {
         state.phase = 'failed'
         state.error = '连接已中断，未收到本轮完成结果，请稍后重试'
       }
     } catch (error) {
-      if (isAbortError(error)) {
+      if (controller.signal.aborted || isAbortError(error)) {
         state.phase = 'aborted'
         state.error = '已停止生成'
       } else {
@@ -488,11 +537,11 @@ export const useConversationStore = defineStore('conversation', () => {
         state.error = error?.message || '重新生成失败'
         if (error?.status === 422) state.error = '这条回复无法关联原问题，不能重新生成'
       }
-      if (turn.assistant) {
-        turn.assistant.text = previousText
+    } finally {
+      if (!state.saved && turn.assistant && ownsTurn(state)) {
+        Object.assign(turn.assistant, previousAnswer)
         delete turn.assistant.previousText
       }
-    } finally {
       await settleRun(state, sessionId)
       if (state.phase === 'failed' && activeId.value === sessionId) ui.notify(state.error, 'err')
     }
@@ -514,8 +563,10 @@ export const useConversationStore = defineStore('conversation', () => {
       state.active = false
       state.phase = 'aborted'
       state.endedAt = Date.now()
+      state.elapsedMs = state.endedAt - state.startedAt
       const assistant = assistantOf(state)
       if (assistant) assistant.streaming = false
+      saveTurnTrace(state)
       if (!silent) ui.notify('已停止生成', 'info')
     }
     if (!Object.values(runs).some((item) => item.active)) stopTicker()
@@ -531,6 +582,7 @@ export const useConversationStore = defineStore('conversation', () => {
   async function remove(id) {
     try {
       await removeSession(id)
+      completedTraces.delete(id)
       sessions.value = sessions.value.filter((session) => session.id !== id)
       if (activeId.value === id) await startNew()
       ui.notify('会话已删除', 'ok')
@@ -543,7 +595,10 @@ export const useConversationStore = defineStore('conversation', () => {
   }
 
   function reset() {
+    generation++
     for (const key of Object.keys(runs)) abortRun({ silent: true, sessionId: key === DRAFT_KEY ? null : key })
+    for (const key of Object.keys(runs)) delete runs[key]
+    completedTraces.clear()
     sessions.value = []
     sessionsStatus.value = 'idle'
     sessionsError.value = ''

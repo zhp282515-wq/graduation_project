@@ -93,11 +93,12 @@ def _to_responses_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 class OpenAIProvider(BaseProvider):
+    provider_id = "openai"
     def __init__(
             self,
             model: str,
             api_key: str | None = None,
-            base_url: str = "https://api.openai-proxy.org/v1",
+            base_url: str | None = None,
     ):
         self.model = model
         key = api_key or os.getenv("OPENAI_API_KEY")
@@ -105,10 +106,14 @@ class OpenAIProvider(BaseProvider):
             logger.error("[配置] 未找到 OPENAI_API_KEY")
             raise ValueError("缺少 API Key：请设置环境变量 OPENAI_API_KEY 或在 .env 中配置")
         self.api_key = key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
 
     def reasoning_kwargs(self, value: Any = None) -> dict[str, Any]:
-        return {"reasoning_effort": "none" if value is None else str(value)}
+        if value is None or value is False:
+            value = "none"
+        elif value is True:
+            value = "high"
+        return {"reasoning_effort": str(value)}
 
     def invoke(
         self,

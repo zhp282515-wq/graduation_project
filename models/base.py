@@ -2,6 +2,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any
 from pydantic import BaseModel, Field
+from threading import Lock
 
 
 class ToolCall(BaseModel):
@@ -29,6 +30,9 @@ class ChatMessage(BaseModel):
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     token_usage: dict[str, Any] | None = None
+    reasoning: str | None = None
+    # Internal provenance for cross-provider checkpoint replay; never sent to APIs.
+    reasoning_provider: str | None = None
 
 class ChatResponse(BaseModel):
     content: str
@@ -52,3 +56,27 @@ class BaseProvider(ABC):
     @abstractmethod
     def stream(self):
         pass
+
+
+class DeferredProvider(BaseProvider):
+    """Construct auxiliary providers on first use so missing keys don't block startup."""
+
+    def __init__(self, factory):
+        self._factory = factory
+        self._instance = None
+        self._lock = Lock()
+
+    def _get(self):
+        with self._lock:
+            if self._instance is None:
+                self._instance = self._factory()
+            return self._instance
+
+    def reasoning_kwargs(self, value=None):
+        return self._get().reasoning_kwargs(value)
+
+    def invoke(self, *args, **kwargs):
+        return self._get().invoke(*args, **kwargs)
+
+    def stream(self, *args, **kwargs):
+        return self._get().stream(*args, **kwargs)
