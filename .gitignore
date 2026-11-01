@@ -47,3 +47,7 @@ tests/browser_*.cjs
 tests/waiting_mock_server.cjs
 tests/generation.test.mjs
 tests/sources.test.mjs
+
+# 本机浏览器验收产物，保留在文件备份中
+output/
+.impeccable/review/
