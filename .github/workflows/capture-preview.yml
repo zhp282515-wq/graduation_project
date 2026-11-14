@@ -40,7 +40,7 @@ jobs:
               {name:'mobile-entrance',path:'/',auth:false,mobile:true}
             ]) {
               const page = await browser.newPage({viewport:spec.mobile?{width:390,height:844}:{width:1440,height:900},deviceScaleFactor:1});
-              await page.route('**/api/**', async route => {
+              await page.route('http://127.0.0.1:5173/api/**', async route => {
                 const p=new URL(route.request().url()).pathname;
                 const json=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
                 if(p==='/api/auth/me') return spec.auth?json({user:{id:'demo',username:'demo',display_name:'演示用户',role:'admin',must_change_password:false},csrf_token:'demo'}):json({},401);
@@ -53,6 +53,7 @@ jobs:
               });
               await page.goto('http://127.0.0.1:5173'+spec.path,{waitUntil:'networkidle'});
               await page.waitForTimeout(3000);
+              if (!(await page.locator('body').innerText()).trim()) throw new Error('Page is empty: '+spec.name);
               console.log(spec.name,page.url(),(await page.locator('body').innerText()).slice(0,400));
               await page.screenshot({path:'screenshots/'+spec.name+'.png'});
               await page.close();
