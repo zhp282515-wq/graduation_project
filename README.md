@@ -89,23 +89,19 @@
 
 ## 界面截图
 
-1600px 宽的压缩截图在 [`docs/screenshots/`](docs/screenshots/)，原始 2×DPR 截图未入库。
+以下截图根据当前仓库前端代码生成。知识库与星图使用示例文档和模拟分片，仅用于展示界面；问学页展示空会话状态。
 
-| 问学（扉页） | 一次带出处的回答 |
+| 首页与登录 | 问学 |
 | --- | --- |
-| ![](docs/screenshots/desktop-inquiry.jpg) | ![](docs/screenshots/desktop-answer.jpg) |
+| ![首页与登录](docs/screenshots/current-entrance.jpg) | ![问学](docs/screenshots/current-inquiry.jpg) |
 
-| 典藏（列表 + 文档详情） | 星夜主题下的问学 |
+| 知识库（示例资料） | 知识星图（示例资料） |
 | --- | --- |
-| ![](docs/screenshots/desktop-archive.jpg) | ![](docs/screenshots/desktop-atlas-night.jpg) |
+| ![知识库](docs/screenshots/current-archive.jpg) | ![知识星图](docs/screenshots/current-atlas.jpg) |
 
-| 星野（自动观测） | 星体详情 |
+| 手机端首页 | 笔记 |
 | --- | --- |
-| ![](docs/screenshots/desktop-atlas.jpg) | ![](docs/screenshots/desktop-atlas-chunk.jpg) |
-
-| 移动端问学 | （更多截图见 `DELIVERY.md` 的索引；原始 2×DPR 图不入库） |
-| --- | --- |
-| ![](docs/screenshots/mobile-inquiry.jpg) |  |
+| ![手机端首页](docs/screenshots/current-mobile-entrance.jpg) | ![笔记](docs/screenshots/current-notes.jpg) |
 
 ## 技术栈
 
