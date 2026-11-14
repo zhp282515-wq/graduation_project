@@ -40,14 +40,16 @@ jobs:
               {name:'mobile-entrance',path:'/',auth:false,mobile:true}
             ]) {
               const page = await browser.newPage({viewport:spec.mobile?{width:390,height:844}:{width:1440,height:900},deviceScaleFactor:1});
+              const docs = ['校园办事指南','图书馆使用指南','学生服务手册','校园生活指南'].map((title,i)=>({file_md5:'demo'+i,file_name:'示例·'+title+'.md',original_name:'示例·'+title+'.md',file_type:'md',chunk_count:75,status:'ready',center:[[ -130,0,0],[100,30,0],[0,-50,-100],[0,100,80]][i],radius:75,created_at:'2026-10-01T08:00:00Z'}));
+              const pts = docs.flatMap((d,i)=>Array.from({length:75},(_,j)=>{const t=j*2.399+i; const rad=15+Math.sqrt(j)*6; return {id:d.file_md5+'-'+j,file_md5:d.file_md5,chunk_index:j,text:'示例内容：校园信息与服务指引。',section_path:'示例资料',x:d.center[0]+Math.cos(t)*rad,y:d.center[1]+Math.sin(t)*rad,z:d.center[2]+Math.sin(t*0.43)*rad};}));
               await page.route('http://127.0.0.1:5173/api/**', async route => {
                 const p=new URL(route.request().url()).pathname;
                 const json=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
                 if(p==='/api/auth/me') return spec.auth?json({user:{id:'demo',username:'demo',display_name:'演示用户',role:'admin',must_change_password:false},csrf_token:'demo'}):json({},401);
-                if(p==='/api/knowledge/documents') return json({items:[],total:0,facets:{}});
-                if(p==='/api/knowledge/overview') return json({total_documents:0,total_chunks:0});
-                if(p==='/api/knowledge/starmap') return json({documents:[],total_chunks:0});
-                if(p==='/api/knowledge/starmap/points') return json({items:[],next_offset:null});
+                if(p==='/api/knowledge/documents') return json({items:docs,total:docs.length,facets:{all:docs.length,md:docs.length}});
+                if(p==='/api/knowledge/overview') return json({documents:docs.length,chunks:pts.length});
+                if(p==='/api/knowledge/starmap') return json({documents:docs,total_chunks:pts.length});
+                if(p==='/api/knowledge/starmap/points') return json({items:pts,next_offset:null});
                 if(p==='/api/knowledge/starmap/edges') return json({items:[]});
                 return json([]);
               });
