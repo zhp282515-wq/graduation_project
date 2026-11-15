@@ -1,0 +1,14 @@
+.git
+.env*
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+frontend/node_modules
+frontend/dist
+data
+logs
+knowledge/parser_data
+tests
+output
+_devtools

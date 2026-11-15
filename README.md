@@ -239,6 +239,29 @@ graph TD
 
 ## 快速开始
 
+### Docker 一键启动（本机）
+
+需要 Docker Desktop 和 Docker Compose；不需要在宿主机安装 Python 或 Node.js。首次使用先复制 `.env.example` 为 `.env`，填入 API 密钥，并将 `AUTH_JWT_SECRET` 设置为至少 32 字节的随机字符串。已有 `.env` 不要覆盖。Windows PowerShell 可用以下命令生成随机字符串，再将输出填入 `.env`（不要分享或提交密钥）：
+
+```powershell
+docker run --rm python:3.13-slim python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+在项目根目录启动全部服务：
+
+```powershell
+docker compose up -d --build
+docker compose ps
+```
+
+访问 <http://127.0.0.1:8080>。首次创建管理员需要在备份现有数据库后执行 `docker compose exec -it backend python -m auth.bootstrap`，按提示输入 `BACKUP`、用户名和密码；此命令也会接管旧演示数据。已有管理员时不必再执行。校历需要另行导入：`docker compose exec backend python -m scripts.import_academic_calendar`。
+
+前端通过 Nginx 代理 API，后端使用容器内的 PostgreSQL 和 Milvus 地址。修改 `.env` 后运行 `docker compose up -d` 重建后端容器以读取新配置；代码改变后运行 `docker compose up -d --build`。停止服务用 `docker compose stop`；重启用 `docker compose up -d`。数据保存在 Docker 数据卷、宿主机 `data/` 和 `knowledge/parser_data/`；不要使用 `docker compose down -v`，它会删除数据库等数据卷。
+
+从本地开发切换时，先停止本机后端，避免两个后端同时操作同一数据库与上传目录。已有 Windows 路径登记的知识库文档可以继续检索，但容器内删除此类文档时可能无法自动清理原始上传文件；原文件位于 `data/knowledge_uploads/`。前端默认只监听本机；PostgreSQL、Milvus 和 Attu 仍按原配置对所有网络接口暴露端口。默认数据库凭据和 HTTP 配置不适合直接暴露到公网。
+
+### 本地开发启动
+
 ### 环境与目录
 
 所有后端命令都在项目根目录 `Graduation-Project/` 执行。需要 Python 3.13+、uv、Node.js/npm 和可运行 Docker Compose 的 Docker 环境。
@@ -250,7 +273,7 @@ graph TD
 ### 1. 启动依赖服务
 
 ```bash
-docker compose up -d
+docker compose up -d postgres milvus attu
 ```
 
 会拉起 etcd、MinIO（仅容器内网）、Milvus（19530 / 9091）、Attu（8000）、PostgreSQL（5432）。
