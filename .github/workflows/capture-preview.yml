@@ -1,0 +1,74 @@
+name: Record interface demo
+on:
+  push:
+    branches: [chore/refresh-interface-screenshots]
+permissions:
+  contents: read
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npm install --no-save --no-package-lock playwright
+          npx playwright install --with-deps chromium
+          sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Record interface
+        working-directory: frontend
+        run: |
+          mkdir -p recordings
+          cat > record-demo.cjs <<'SCRIPT'
+          const {chromium}=require('playwright');
+          (async()=>{
+           const browser=await chromium.launch({args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+           const ctx=await browser.newContext({viewport:{width:1280,height:720},recordVideo:{dir:'recordings',size:{width:1280,height:720}}});
+           const page=await ctx.newPage(); let signed=false;
+           const account={user:{id:'demo',username:'demo',display_name:'演示用户',role:'admin',must_change_password:false},csrf_token:'demo'};
+           const docs=['校园办事指南','图书馆使用指南','学生服务手册','校园生活指南'].map((title,i)=>({file_md5:'demo'+i,file_name:'示例·'+title+'.md',original_name:'示例·'+title+'.md',file_type:'md',chunk_count:75,status:'ready',center:[[-130,0,0],[100,30,0],[0,-50,-100],[0,100,80]][i],radius:75,created_at:'2026-10-01T08:00:00Z'}));
+           const pts=docs.flatMap((d,i)=>Array.from({length:75},(_,j)=>{const t=j*2.399+i,r=15+Math.sqrt(j)*6;return {id:d.file_md5+'-'+j,chunk_id:d.file_md5+'-'+j,file_md5:d.file_md5,chunk_index:j,text:'示例资料：有关校园信息与服务的内容。',section_path:'示例资料',x:d.center[0]+Math.cos(t)*r,y:d.center[1]+Math.sin(t)*r,z:d.center[2]+Math.sin(t*.43)*r}}));
+           const session={id:'demo-session',title:'示例：校园信息咨询',created_at:'2026-11-01T08:00:00Z',updated_at:'2026-11-01T08:00:00Z'};
+           const source={id:'knowledge:demo0:0',kind:'knowledge',title:'示例·校园办事指南.md',file_md5:'demo0',chunk_id:'demo0-0',chunk_index:0,file_type:'md',section_path:'学生服务',text:'此处为演示用的校园资料片段，具体办理要求请以学校官方通知为准。'};
+           const messages=[{id:'q1',role:'user',content:'学生证丢失后应该怎么办？',created_at:'2026-11-01T08:00:00Z'},{id:'a1',role:'assistant',reply_to_message_id:'q1',content:'**示例回答**：可以先查看学校发布的学生证补办通知，了解所需材料、办理地点和时间。\n\n具体流程可能发生变化，请以学校官方通知或相关部门回复为准。',sources:[source],created_at:'2026-11-01T08:00:01Z'}];
+           await page.route('http://127.0.0.1:5173/api/**',async route=>{
+            const p=new URL(route.request().url()).pathname;const send=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
+            if(p==='/api/auth/me')return signed?send(account):send({},401);
+            if(p==='/api/auth/login'){signed=true;return send(account)}
+            if(p==='/api/sessions')return send([session]);
+            if(p==='/api/sessions/demo-session/messages')return send(messages);
+            if(p==='/api/knowledge/documents')return send({items:docs,total:docs.length,facets:{all:4,md:4}});
+            if(p.startsWith('/api/knowledge/documents/')&&p.endsWith('/chunks'))return send({document:docs[0],items:pts.slice(0,6),total:75});
+            if(p==='/api/knowledge/overview')return send({documents:4,chunks:300,ready:4});
+            if(p==='/api/knowledge/starmap')return send({documents:docs,total_chunks:300});
+            if(p==='/api/knowledge/starmap/points')return send({items:pts,next_offset:null});
+            if(p==='/api/knowledge/starmap/edges')return send({items:[]});
+            if(p==='/api/notes')return send([{id:'demo-note',title:'示例：校园办事记录',content:'# 校园办事记录\n\n- 先查看学校官方通知\n- 准备需要的材料\n- 确认办理地点与时间\n\n以上为演示内容。',created_at:'2026-11-01T08:00:00Z',updated_at:'2026-11-01T08:00:00Z'}]);
+            if(p==='/api/memories')return send([{id:'m1',content:'示例偏好：回答时优先列出清晰的办理步骤。',created_at:'2026-11-01T08:00:00Z'}]);
+            return send([]);
+           });
+           const mark=async label=>console.log('TIMELINE',Date.now()-start,label);
+           await page.goto('http://127.0.0.1:5173/',{waitUntil:'domcontentloaded'}); await page.waitForTimeout(3000); const start=Date.now();await mark('entrance');
+           await page.waitForTimeout(4000);await page.getByPlaceholder('你的用户名').fill('demo');await page.waitForTimeout(600);await page.getByPlaceholder('至少 8 个字符').fill('demo2026');await page.waitForTimeout(700);await page.getByRole('button',{name:'登录，进入问学'}).click();await page.waitForTimeout(4000);await mark('inquiry');
+           await page.goto('http://127.0.0.1:5173/inquiry/demo-session',{waitUntil:'domcontentloaded'});await page.waitForTimeout(3500);await mark('answer');await page.waitForTimeout(4500);
+           const sources=page.getByText(/1\s*条?来源|1\s*份|来源汇总/).first();if(await sources.count())await sources.click({timeout:2000}).catch(()=>{});await page.waitForTimeout(3500);
+           await page.goto('http://127.0.0.1:5173/archive',{waitUntil:'domcontentloaded'});await page.waitForTimeout(3500);await mark('archive');await page.waitForTimeout(3000);await page.getByText('示例·校园办事指南',{exact:false}).first().click({timeout:3000}).catch(()=>{});await page.waitForTimeout(4500);
+           await page.goto('http://127.0.0.1:5173/atlas',{waitUntil:'domcontentloaded'});await page.waitForTimeout(5000);await mark('atlas');await page.waitForTimeout(5000);await page.mouse.move(730,350);await page.mouse.wheel(0,-240);await page.waitForTimeout(4500);
+           await page.goto('http://127.0.0.1:5173/notes',{waitUntil:'domcontentloaded'});await page.waitForTimeout(3500);await mark('notes');await page.waitForTimeout(4500);
+           await page.goto('http://127.0.0.1:5173/memory',{waitUntil:'domcontentloaded'});await page.waitForTimeout(3500);await mark('memory');await page.waitForTimeout(4500);
+           await page.goto('http://127.0.0.1:5173/inquiry',{waitUntil:'domcontentloaded'});await page.waitForTimeout(3000);await mark('end');await page.waitForTimeout(4000);
+           await ctx.close();await browser.close();
+          })().catch(e=>{console.error(e);process.exit(1)});
+          SCRIPT
+          npm run dev -- --host 127.0.0.1 > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:5173/ >/dev/null && break; sleep 1; done
+          node record-demo.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: interface-demo-video
+          path: frontend/recordings/*.webm
