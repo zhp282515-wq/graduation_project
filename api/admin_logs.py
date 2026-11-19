@@ -5,6 +5,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from session import log_context
 from auth.routes import require_admin
 
 router = APIRouter(prefix="/api/admin/logs", dependencies=[Depends(require_admin)])
@@ -27,7 +28,13 @@ class AuditMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["method"] in {"HEAD", "GET", "OPTIONS"}:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        with log_context.bind(log_context.request_state, scope.setdefault("state", {})):
+            return await self.audit(scope, receive, send)
+
+    async def audit(self, scope, receive, send):
+        if scope["method"] in {"HEAD", "GET", "OPTIONS"}:
             return await self.app(scope, receive, send)
         status = 500
 
@@ -76,7 +83,8 @@ def logs(request: Request, response: Response, category: Literal["runtime", "ope
     if before:
         clauses.append("(occurred_at,id) < (SELECT occurred_at,id FROM admin_log_events WHERE id=%s)")
         values.append(before)
-    query = """SELECT id,occurred_at,source,event,level,actor_id,outcome FROM admin_log_events
+    query = """SELECT id,occurred_at,source,event,level,actor_id,outcome,ctx.purpose,ctx.model,ctx.actor_kind
+               FROM admin_log_events LEFT JOIN admin_log_context ctx ON ctx.event_id=admin_log_events.id
                WHERE """ + " AND ".join(clauses) + " ORDER BY occurred_at DESC,id DESC LIMIT 31"
     with request.app.state.pg_pool.connection() as conn:
         rows = conn.execute(query, values).fetchall()

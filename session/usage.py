@@ -10,6 +10,8 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
+from session import log_context
+
 log = logging.getLogger(__name__)
 _actor = ContextVar("usage_actor", default=None)
 _receipt = ContextVar("usage_receipt", default=None)
@@ -55,7 +57,8 @@ class UsageWriter:
             with self.pool.connection() as conn:
                 insert_event(conn, values)
         except Exception:
-            log.exception("Token 用量写入失败")
+            with log_context.bind(log_context.user_id, values[1]):
+                log.exception("Token 用量写入失败")
 
     def close(self):
         self.worker.shutdown(wait=True)
@@ -71,7 +74,8 @@ class Attribution:
     def run(self, function, *args, **kwargs):
         token = _actor.set(self if self.writer else None)
         try:
-            return function(*args, **kwargs)
+            with log_context.bind(log_context.user_id, self.user_id):
+                return function(*args, **kwargs)
         finally:
             _actor.reset(token)
 
@@ -163,7 +167,7 @@ def call_source(messages, tools):
 def metered_stream(method):
     @wraps(method)
     def wrapper(self, messages, tools=None, *args, **kwargs):
-        stream = method(self, messages, tools, *args, **kwargs)
+        stream = log_context.model_stream(method(self, messages, tools, *args, **kwargs), self.model)
         actor = _actor.get()
         if actor is None:
             yield from stream
@@ -198,6 +202,7 @@ def metered_stream(method):
 
 
 def metered_invoke(method):
+    method = log_context.model_method()(method)
     @wraps(method)
     def wrapper(self, messages, tools=None, *args, **kwargs):
         if _actor.get() is None:

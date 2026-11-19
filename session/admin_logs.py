@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
+from session import log_context
 from utils.logger_tool import LOG_DIR, logger
 
 SCHEMA = """
@@ -13,6 +14,10 @@ CREATE TABLE IF NOT EXISTS admin_log_events (
  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  occurred_at timestamptz NOT NULL, category text NOT NULL, source text NOT NULL,
  event text NOT NULL, level text, actor_id text, outcome text, history_key text UNIQUE
+);
+CREATE TABLE IF NOT EXISTS admin_log_context (
+ event_id bigint PRIMARY KEY REFERENCES admin_log_events(id) ON DELETE CASCADE,
+ purpose text, model text, actor_kind text NOT NULL
 );
 CREATE INDEX IF NOT EXISTS admin_log_time ON admin_log_events(category, occurred_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS admin_log_actor ON admin_log_events(actor_id, occurred_at DESC) WHERE actor_id IS NOT NULL;
@@ -92,12 +97,20 @@ class DashboardLogs(logging.Handler):
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="admin-logs")
 
     def submit(self, row):
-        self.worker.submit(self.write, row)
+        context = None
+        if row[1] == "runtime":
+            actor, kind = log_context.identity()
+            row = (*row[:5], actor, *row[6:])
+            context = (log_context.purpose.get(), log_context.model_name.get(), kind)
+        self.worker.submit(self.write, row, context)
 
-    def write(self, row):
+    def write(self, row, context=None):
         try:
-            with self.pool.connection() as conn:
-                conn.execute(INSERT, row)
+            with self.pool.connection() as conn, conn.transaction():
+                saved = conn.execute(INSERT + " RETURNING id", row).fetchone()
+                if saved and context:
+                    conn.execute("""INSERT INTO admin_log_context(event_id,purpose,model,actor_kind)
+                                    VALUES (%s,%s,%s,%s)""", (saved["id"], *context))
         except Exception:
             diagnostics.error("管理员日志写入失败")
 

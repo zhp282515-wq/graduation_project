@@ -9,6 +9,7 @@ import time
 from typing import Any, Sequence
 
 import httpx
+from session.log_context import model_method
 from session.usage import auxiliary, error_usage
 from dotenv import load_dotenv
 
@@ -40,6 +41,7 @@ class DashScopeReranker:
         self.url = url
         self.timeout = timeout
 
+    @model_method("检索重排")
     def rerank(
         self,
         query: str,

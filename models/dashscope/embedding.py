@@ -10,6 +10,7 @@ import time
 from typing import Any, Sequence
 
 import httpx
+from session.log_context import model_method
 from session.usage import auxiliary, error_usage
 from dotenv import load_dotenv
 
@@ -61,6 +62,7 @@ class DashScopeEmbedding:
         """单条查询文本的向量。"""
         return self._embed_batch([text])[0]
 
+    @model_method("向量化")
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         payload = {
             "model": self.model,

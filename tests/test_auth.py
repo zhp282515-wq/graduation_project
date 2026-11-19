@@ -103,7 +103,7 @@ class AuthIntegrationTests(unittest.TestCase):
         from session.admin_logs import DashboardLogs, SCHEMA, import_history
         with self.pool.connection() as conn:
             conn.execute(SCHEMA)
-            conn.execute("TRUNCATE admin_log_events")
+            conn.execute("TRUNCATE admin_log_events,admin_log_context")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "FFan_2020-01-01.log"
             path.write_text(("2020-01-01 09:30:00 - FFan - ERROR - deepseek.py:123 - [错误] secret-payload\n"
@@ -139,6 +139,42 @@ class AuthIntegrationTests(unittest.TestCase):
             self.assertEqual(len(more["items"]),2)
             with patch.object(writer,"submit",side_effect=RuntimeError()):
                 self.assertEqual(self.client.post("/api/auth/logout").status_code,200)
+
+    def test_runtime_model_and_user_follow_overlapping_requests(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from agent.memory import MemoryExtractor
+        from models.deepseek import DeepSeekProvider
+        from models.dashscope.Qwen_model import DashScopeProvider
+        from session.admin_logs import DashboardLogs, SCHEMA
+        from session.usage import Attribution
+        from tests.test_deepseek import QUERY, chunk, stream_response
+        from utils.logger_tool import logger
+
+        with self.pool.connection() as conn:
+            conn.execute(SCHEMA)
+        handler = DashboardLogs(self.pool)
+        logger.addHandler(handler)
+        self.addCleanup(handler.stop)
+        barrier = threading.Barrier(2)
+        def respond(*args, **kwargs):
+            barrier.wait(timeout=5)
+            return stream_response([chunk({"content":"[]"}, "stop")])
+        qa = DeepSeekProvider("deepseek-flash", api_key="fixture")
+        memory = MemoryExtractor(DashScopeProvider(model="qwen3.7-flash", api_key="fixture"))
+        alice = Attribution(None, self.alice["id"], "user", "s1")
+        bob = Attribution(None, self.bob["id"], "user", "s2")
+        with patch("httpx.stream", side_effect=respond), ThreadPoolExecutor(max_workers=2) as pool:
+            answer = pool.submit(alice.run, list, qa.stream(QUERY))
+            extraction = pool.submit(bob.run, memory.extract, user_text="fixture", assistant_text="ok", known=[])
+            answer.result()
+            extraction.result()
+        handler.worker.submit(lambda: None).result()
+        self.login("administrator")
+        for actor, purpose, model in ((alice, "问答", "deepseek-flash"), (bob, "记忆提取", "qwen3.7-flash")):
+            rows = self.client.get("/api/admin/logs",params={"actor_id":actor.user_id}).json()["items"]
+            self.assertGreaterEqual(len(rows), 2)
+            self.assertEqual({(r["actor_id"],r["actor_kind"],r["purpose"],r["model"]) for r in rows},
+                             {(actor.user_id,"user",purpose,model)})
 
     def test_usage_backfill_replays_only_reliable_rows(self):
         with self.pool.connection() as conn:

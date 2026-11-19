@@ -52,6 +52,7 @@ class MemoryExtractor:
     def __init__(self, model, *, min_turns: int = 1):
         self._summarizer = Summarizer(
             model,
+            purpose="记忆提取",
             system_prompt="你是一个严格的信息抽取器，只输出 JSON，不输出任何解释。",
         )
         self._min_turns = min_turns
