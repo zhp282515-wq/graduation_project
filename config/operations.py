@@ -1,0 +1,10 @@
+"""Operational thresholds, expressed on Shanghai calendar windows where applicable."""
+STALE_DAYS = 365
+HIGH_FREQUENCY = 60
+ERROR_PERCENT = 5
+ERROR_MINUTES = 10
+FIRST_P95_MS = 8000
+TOOL_FAILURE_PERCENT = 20
+TOOL_SAMPLE = 20
+MISSING_INCREASE_PP = 10
+RETENTION_DAYS = 90

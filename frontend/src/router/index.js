@@ -14,6 +14,9 @@ const routes = [
   { path: '/password', name: 'password', component: () => import('../views/SettingsView.vue'), meta: { mode: 'settings', title: '修改密码' } },
   { path: '/settings/model', name: 'model-settings', component: () => import('../views/SettingsView.vue'), meta: { mode: 'settings', title: '模型配置', admin: true } },
   { path: '/forbidden', component: { render: () => h('p', { role: 'alert', class: 'view-head' }, '403 · 此页面仅管理员可访问') } },
+  { path: '/feedback', name: 'feedback', component: () => import('../views/FeedbackView.vue'), meta: { mode: 'feedback', title: '意见反馈' } },
+  { path: '/admin/feedback', name: 'admin-feedback', component: () => import('../views/AdminFeedbackView.vue'), meta: { mode: 'admin-feedback', title: '反馈管理', admin: true, forbidden: true } },
+  { path: '/admin/dashboard', name: 'admin-dashboard', component: () => import('../views/AdminDashboardView.vue'), meta: { mode: 'dashboard', title: '运营看板', admin: true, forbidden: true } },
   { path: '/admin/logs', name: 'admin-logs', component: () => import('../views/AdminLogsView.vue'), meta: { mode: 'logs', title: '日志', admin: true } },
   { path: '/admin/usage', name: 'admin-usage', component: () => import('../views/AdminUsageView.vue'), meta: { mode: 'usage', title: 'Token 用量', admin: true } },
   { path: '/admin/users', component: () => import('../views/AdminUsersView.vue'), meta: { mode: 'users', title: '账号管理', admin: true } },
@@ -66,14 +69,15 @@ router.beforeEach(async (to) => {
   try { await auth.restore() } catch { return to.meta.public ? true : { path: '/login', query: { redirect: to.fullPath } } }
   if (!to.meta.public && !auth.user) return { path: '/login', query: { redirect: to.fullPath } }
   if (auth.user?.must_change_password && to.path !== '/password') return '/password'
-  if (['admin-logs','admin-usage'].includes(to.name) && !auth.isAdmin) return '/forbidden'
+  if (to.name === 'feedback' && auth.isAdmin) return { name: 'admin-feedback' }
+  if ((to.meta.forbidden || ['admin-logs','admin-usage'].includes(to.name)) && !auth.isAdmin) return '/forbidden'
   if (to.meta.admin && !auth.isAdmin) return '/inquiry'
-  if (auth.user && ['/login', '/register'].includes(to.path)) return '/inquiry'
+  if (auth.user && ['/login', '/register'].includes(to.path)) return auth.isAdmin ? '/admin/dashboard' : '/inquiry'
 })
 
 /** 星野只在停留期间关灯，离开后回到用户原本选择的材质。 */
 router.afterEach((to) => {
-  document.title = '饭饭'
+  document.title = '师小大'
   const root = document.documentElement
   if (to.meta?.forceNight) root.dataset.forceNight = 'on'
   else delete root.dataset.forceNight

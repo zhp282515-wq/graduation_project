@@ -1,4 +1,5 @@
 from typing import Any
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -97,6 +98,8 @@ def _to_message(row: dict[str, Any]) -> Message:
         images=row["images"],
         sources=row.get("sources"),
         reply_to_message_id=row.get("reply_to_message_id"),
+        revision=row.get("revision", 0),
+        rating=row.get("rating"),
     )
 
 
@@ -141,6 +144,7 @@ class PostgresSessionRepository:
         with self._conn.cursor() as cur:
             cur.execute(_SCHEMA)
             cur.execute(_MIGRATE)
+            cur.execute(Path(__file__).with_name("feedback_schema.sql").read_text(encoding="utf-8"))
             cur.execute(
                 "UPDATE sessions SET user_id = %s WHERE user_id IS NULL OR user_id = ''",
                 (self._legacy_user_id,),
@@ -318,6 +322,11 @@ class PostgresSessionRepository:
                 )
                 if cur.rowcount != 1:
                     raise ValueError("会话已不存在")
+                row["revision"] = self._conn.execute(
+                    """INSERT INTO answer_revisions(message_id, revision) VALUES (%s, 1)
+                    ON CONFLICT (message_id) DO UPDATE SET revision = answer_revisions.revision + 1
+                    RETURNING revision""", (message_id,),
+                ).fetchone()["revision"]
         self._conn.commit()
         return _to_message(row)
 
@@ -326,9 +335,13 @@ class PostgresSessionRepository:
             cur.execute(
                 """
                 SELECT m.id, m.session_id, m.role, m.content, m.created_at,
-                       m.tool_calls, m.tool_call_id, m.token_usage, m.images, m.sources, m.reply_to_message_id
+                       m.tool_calls, m.tool_call_id, m.token_usage, m.images, m.sources, m.reply_to_message_id,
+                       COALESCE(r.revision, 0) AS revision, a.vote AS rating
                 FROM messages m
                 JOIN sessions s ON s.id = m.session_id
+                LEFT JOIN answer_revisions r ON r.message_id = m.id
+                LEFT JOIN answer_ratings a ON a.message_id = m.id AND a.user_id = s.user_id
+                    AND a.revision = COALESCE(r.revision, 0)
                 WHERE m.session_id = %s AND s.user_id = %s
                 ORDER BY m.id ASC
                 """,

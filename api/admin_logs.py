@@ -1,11 +1,13 @@
 """Administrative log queries and audit events for explicit business operations."""
 import logging
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from session import log_context
+from session.operations import AUDIT_ACTIONS, EVENT
 from auth.routes import require_admin
 
 router = APIRouter(prefix="/api/admin/logs", dependencies=[Depends(require_admin)])
@@ -48,9 +50,18 @@ class AuditMiddleware:
             await self.app(scope, receive, inspect_status)
         finally:
             name = getattr(scope.get("route"), "name", None)
+            state = scope.get("state", {})
+            operations = getattr(scope["app"].state, "operations_writer", None)
+            if operations and name in AUDIT_ACTIONS and state.get("audit_role") == "admin" and 200 <= status < 300:
+                document = scope.get("path_params", {}).get("file_md5", "")
+                if not re.fullmatch(r"[0-9a-f]{32}", document):
+                    document = None
+                target = state.get("audit_object") or document or {
+                    "update_model_settings": "问答模型", "sync_knowledge": "知识库登记表",
+                }.get(name)
+                operations.submit(EVENT, ("audit:" + name,target,state.get("audit_actor")))
             writer = getattr(scope["app"].state, "dashboard_logs", None)
             if writer and name in ACTIONS:
-                state = scope.get("state", {})
                 ok = 200 <= status < 300
                 if name in ("chat", "regenerate_message"):
                     ok = ok and state.get("chat_completed", False)

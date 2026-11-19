@@ -1,5 +1,5 @@
 ---
-name: "饭饭 · 校园智能体"
+name: "师小大 · 校园智能体"
 description: "以白色阅读空间、黑灰夜色与校徽细节，连接校园问题、来源和知识星图。"
 colors:
   paper-bg: "#fafafa"
@@ -100,7 +100,7 @@ components:
     backgroundColor: "{colors.entry-accent-hover}"
 ---
 
-# Design System: 饭饭 · 校园智能体
+# Design System: 师小大 · 校园智能体
 
 ## Overview
 

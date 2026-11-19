@@ -1,7 +1,7 @@
-﻿# 星野台 · 前端（Vue 3 重构版）
+﻿# 师小大 · 前端（Vue 3 重构版）
 
 > 江西师范大学校园智能体的新一代前端：白天在「纸本」上问学、整理档案，夜里抬头看「星野」。
-> 后端接口、SSE 事件、上传协议与数据库结构全部沿用原实现，前端只重写呈现与交互。
+> 浏览器通过同源接口访问 FastAPI。会话、图片、用户反馈与运营数据由后端管理。
 
 - 仓库内位置：`frontend/`
 - 运行时后端：`http://127.0.0.1:8002`（Vite 代理 `/api` 与 `/uploads`）
@@ -16,7 +16,7 @@
 cd frontend
 npm ci            # 或 npm install
 npm run dev       # http://127.0.0.1:5173
-npm test          # vitest，58 例
+npm test          # 运行 Vitest
 npm run build     # 产物在 dist/
 npm run preview   # 预览生产构建（http://127.0.0.1:4173）
 ```
@@ -30,8 +30,9 @@ npm run preview   # 预览生产构建（http://127.0.0.1:4173）
 把临时目录指到工作区即可：
 
 ```powershell
-New-Item -ItemType Directory -Force D:\1oveb\毕业设计\.tmp | Out-Null
-$env:TEMP = "D:\1oveb\毕业设计\.tmp"; $env:TMP = $env:TEMP
+$buildTemp = New-Item -ItemType Directory -Force node_modules/.cache/esbuild-temp
+$env:TEMP = $buildTemp.FullName
+$env:TMP = $env:TEMP
 npm run build
 ```
 
@@ -41,12 +42,20 @@ npm run build
 
 | 路由 | 名称 | 作用 |
 | --- | --- | --- |
-| `/inquiry/:sessionId?` | 问学 INQUIRY | 对话：提问、流式回答、工具轨迹、出处、重新生成、停止、图片输入、深思考开关 |
+| `/`、`/login`、`/register` | 产品入口 | 登录、注册和产品交互示例 |
+| `/inquiry/:sessionId?` | 问学 INQUIRY | 提问、流式回答、工具轨迹、出处、重新生成、点赞、点踩、停止、图片输入、深思考开关 |
+| `/notes/:noteId?` | 笔记 | 查看、编辑和删除从回答保存的笔记 |
 | `/archive/:fileMd5?` | 典藏 ARCHIVE | 知识库：搜索、类型筛选、排序、分页、上传队列、任务状态、分片浏览、删除、同步 |
 | `/memory` | 记忆 MEMORY | 长期记忆：查看、行内改写、删除 |
 | `/atlas/:chunkId?` | 星野 ATLAS | 知识星图：1,759 个真实分片的星体、星群、星链、语义连线、搜索定位与分片详情 |
+| `/feedback` | 意见反馈 | 普通用户提交类别、说明和图片 |
+| `/admin/dashboard` | 运营看板 | 管理员登录首页，查看概览、内容与质量、知识库、系统、安全 |
+| `/admin/feedback` | 反馈管理 | 管理员查看反馈与赞踩趋势，修改处理状态并筛选全部、未处理或已处理 |
+| `/admin/usage` | Token 用量 | 管理员查看完整 Token 数、用量榜及每日 Token、工具调用和消息趋势 |
+| `/admin/logs` | 日志 | 管理员查看运行和用户操作日志 |
+| `/admin/users`、`/admin/search`、`/settings/model` | 管理设置 | 账号管理、独立知识检索与模型配置 |
 
-全局外壳：左侧 78px 竖排 rail（印章 + 四模式 + 会话 / 主题 / ⌘K）→ 顶部上下文状态栏 → 内容区。
+全局外壳包含品牌「师小大」、按角色显示的导航入口、设置、退出和主题切换。
 ≤900px 时 rail 变底部横条，抽屉与面板改为底部 sheet。
 
 会话不再常驻侧栏，而是全高抽屉「会话档案」（`⌘J` / 顶部按钮打开，按今天 / 昨天 / 本周 / 更早分组）。
@@ -64,11 +73,11 @@ npm run build
 
 | | 纸本 paper（默认） | 星夜 night |
 | --- | --- | --- |
-| 底 | `#f2eee4` 纸面 | `#07070b` |
-| 面 | `#fbf8f1` | `#0c0d13` |
-| 墨 | `#1c1813` | `#ece6d8` |
-| 强调 | 朱砂 `#a3352a` | `#e2684c` |
-| 线 | `rgba(28,24,19,.13)` | `rgba(237,231,218,.14)` |
+| 底 | `#faf9f7` | `#111212` |
+| 面 | `#fffefc` | `#1b1c1c` |
+| 墨 | `#1f1e1c` | `#f1f1ef` |
+| 强调 | `#2c2b28` | `#d8ded8` |
+| 线 | `rgba(38,34,28,.13)` | `rgba(240,240,235,.14)` |
 
 - **字体**：展示用 `Instrument Serif`（打包 `@fontsource/instrument-serif`），元数据用 `JetBrains Mono Variable`，
   中文标题走系统宋体栈（`Songti SC / STSong / SimSun`），正文走系统黑体栈。不额外加载中文 webfont。
@@ -87,10 +96,10 @@ frontend/
 ├── vite.config.js             # /api、/uploads 代理；three 单独切 chunk
 ├── vitest.config.js
 ├── public/favicon.svg
-├── tests/                     # 58 例 vitest（utils / SSE 解析 / atlas store）
+├── tests/                     # Vitest 回归测试
 └── src/
     ├── main.js  App.vue  router/index.js
-    ├── api/                   # http 封装、SSE 解析、会话 / 对话 / 上传 / 知识库 / 记忆
+    ├── api/                   # HTTP、SSE、鉴权、会话、知识库、记忆与反馈
     ├── stores/                # ui / conversations / library / memory / atlas（Pinia setup store）
     ├── utils/                 # 时间与字节格式、来源归一化、历史配对、Markdown 渲染、工具文案
     ├── composables/confirm.js # Promise 化确认框
@@ -99,18 +108,18 @@ frontend/
     │   ├── shell/             # AppRail、SessionLedger、CommandPalette
     │   ├── ui/                # Icon、BaseSheet、ToastStack、ConfirmDialog
     │   └── chat/              # TurnItem、AnswerBlock、RunTrace、SourceStrip、SourceSheet、Composer
-    ├── views/                 # InquiryView、ArchiveView、MemoryView、AtlasView
+    ├── views/                 # 用户视图与管理员看板
     └── styles/                # tokens / base / layout / markdown
 ```
 
 状态分层：`api/*` 只做请求与解包；`stores/*` 持有状态与业务流程（发送、重试、轮询、筛选、选星）；
-`views/*` 只负责布局与事件绑定；渲染型组件（Composer / AnswerBlock）保持无请求副作用。
+`views/*` 管理页面布局与页面级请求。回答评价由 `AnswerRating` 管理，反馈表单由 `FeedbackForm` 复用，多个看板共用 `ReportChart`。
 
 ---
 
-## 5. 与后端的契约（未改动）
+## 5. 与后端的契约
 
-所有请求带 `x-user-id: user_001`（与旧前端一致，开发期身份方案，不是真实鉴权）。
+请求通过 HttpOnly Cookie 鉴权，写请求由 HTTP 封装携带 `X-CSRF-Token`，后端同时验证可信 Origin。详细权限见 [账号与权限](../docs/auth.md)，完整路由见 [HTTP 接口](../README.md#http-接口)。
 
 | 用途 | 请求 |
 | --- | --- |
@@ -118,6 +127,9 @@ frontend/
 | 历史消息 | `GET /api/sessions/{id}/messages` |
 | 流式对话 | `POST /api/chat` → SSE（`{session_id,text,images,reasoning}`） |
 | 重新生成 | `POST /api/sessions/{id}/messages/{message_id}/regenerate` → SSE |
+| 回答评价 | `PUT /api/sessions/{id}/messages/{message_id}/rating`，提交 `revision` 和 `vote` |
+| 提交反馈 | `POST /api/feedback`（multipart），普通用户提交 |
+| 反馈管理 | `GET /api/admin/feedback?status=all`，状态也可用 `pending` 或 `processed`；`PUT /api/admin/feedback/{id}/status` 更新 |
 | 图片上传 | `POST /api/upload`（multipart，≤10MB） |
 | 记忆 | `GET /api/memories`、`PUT /api/memories/{id}`、`DELETE /api/memories/{id}` |
 | 知识库 | `GET /api/knowledge/documents`、`/chunks`、`/jobs/{md5}`、`POST /upload`、`POST /sync`、`DELETE /documents/{md5}` |
@@ -142,6 +154,7 @@ run_failed    {error_type,message,elapsed_ms}
 - `tool_started` / `tool_finished` 累积为**本轮工具轨迹**（答案内联展示，可折叠）；
 - `tool_finished.sources` 与 `done.final_answer.sources` 按 `id` 去重合并；
 - 只有 `done` 才把回答视为落库；`run_failed`、断流、用户中止都会显示明确的失败块，且不会伪造回答；
+- 历史消息回显 `revision` 和当前评价 `rating`。重新生成成功时 SSE 返回新版 `revision`，新版回答可独立评价。
 - 停止生成 = `AbortController.abort()`，界面提示「这一段回答没有保存」，刷新后该轮只有提问（与后端不落库行为一致）。
 
 ---
@@ -219,7 +232,7 @@ cd frontend
 npm test
 ```
 
-6 个文件、58 例：
+核心覆盖：
 - `format.test.js` 时间 / 字节 / 时长 / 标题截断 / Markdown 纯文本化；
 - `history.test.js` `reply_to_message_id` 配对、孤儿回答、图片路径、标题推导；
 - `citations.test.js` 来源归一化、按文档分组、元信息文案；

@@ -1,8 +1,12 @@
 from typing import Any
+from time import perf_counter
+
+import httpx
 
 from agent.tools.base import ToolError, ToolResult
 from agent.tools.registry import ToolRegistry
 from session.usage import record_tool
+from session.operations import observe_tool
 from models.base import ToolCall
 from utils.logger_tool import logger
 
@@ -55,14 +59,29 @@ def execute_tool(registry: ToolRegistry, tool_call: ToolCall) -> ToolResult:
         return ToolResult(content=f"工具 {tool_call.name} 的参数不符合要求：{problem}", status="error")
 
     record_tool(tool.name)
+    started = perf_counter()
+    error = None
+    results = None
     try:
         output = tool.run(**tool_call.arguments)
         if isinstance(output, ToolResult):
+            error = "tool_error" if output.status == "error" else None
+            if not error and tool.name in {"knowledge_search", "websearch"}:
+                results = len(output.sources or [])
             return output
         return ToolResult(content=str(output))
     except ToolError as exc:
+        cause = exc.__cause__
+        error = "timeout" if isinstance(cause, (TimeoutError, httpx.TimeoutException)) else (
+            "upstream" if isinstance(cause, httpx.HTTPError) else "tool_error"
+        )
         logger.warning("工具 %s 执行失败：%s", tool_call.name, exc)
         return ToolResult(content=str(exc), status="error")
-    except Exception:
+    except Exception as exc:
+        error = "timeout" if isinstance(exc, (TimeoutError, httpx.TimeoutException)) else (
+            "upstream" if isinstance(exc, httpx.HTTPError) else "internal"
+        )
         logger.exception("工具 %s 发生未预期的异常", tool_call.name)
         return ToolResult(content="工具执行出现内部错误，请稍后重试。", status="error")
+    finally:
+        observe_tool(tool.name, error, started, tool_call.arguments.get("query"), results)

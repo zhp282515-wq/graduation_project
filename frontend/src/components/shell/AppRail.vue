@@ -16,15 +16,17 @@ async function logout() {
 const route = useRoute()
 
 const items = computed(() => [
+  ...(auth.isAdmin ? [{ mode: 'dashboard', label: '看板', icon: 'dashboard', to: '/admin/dashboard' }] : []),
   { mode: 'inquiry', label: '问学', latin: 'Inquiry', icon: 'inquiry', to: '/inquiry', index: '01' },
   { mode: 'archive', label: '典藏', latin: 'Archive', icon: 'archive', to: '/archive', index: '02' },
   { mode: 'atlas', label: '星野', latin: 'Atlas', icon: 'atlas', to: '/atlas', index: '03' },
   ...(auth.isAdmin ? [
+    { mode: 'admin-feedback', label: '反馈管理', icon: 'file', to: '/admin/feedback' },
     { mode: 'logs', label: '日志', latin: 'Logs', icon: 'file', to: '/admin/logs' },
     { mode: 'usage', label: '用量', latin: 'Usage', icon: 'layers', to: '/admin/usage' },
     { mode: 'search', label: '检索', latin: 'Search', icon: 'search', to: '/admin/search', index: '04' },
     { mode: 'users', label: '账号', latin: 'Users', icon: 'users', to: '/admin/users', index: '05' },
-  ] : []),
+  ] : [{ mode: 'feedback', label: '反馈', icon: 'message', to: '/feedback' }]),
 ])
 
 const currentMode = computed(() => route.meta?.mode || 'inquiry')
@@ -32,14 +34,15 @@ const currentMode = computed(() => route.meta?.mode || 'inquiry')
 
 <template>
   <nav class="rail" aria-label="主导航">
-    <RouterLink to="/inquiry" class="rail-brand" aria-label="星野台，返回问学">
-      <span class="rail-wordmark serif" aria-hidden="true">星野台</span>
+    <RouterLink to="/inquiry" class="rail-brand" aria-label="师小大，返回问学">
+      <span class="rail-wordmark serif" aria-hidden="true">师小大</span>
     </RouterLink>
 
     <ul class="rail-nav">
       <li v-for="item in items" :key="item.mode">
         <RouterLink
           :to="item.to"
+          :title="item.mode === 'dashboard' ? '运营看板' : item.mode === 'feedback' ? '意见反馈' : item.label"
           class="rail-item"
           :class="{ 'is-active': currentMode === item.mode }"
           :aria-current="currentMode === item.mode ? 'page' : undefined"

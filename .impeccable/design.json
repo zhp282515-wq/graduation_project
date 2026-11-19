@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-10-28T10:39:10.631Z",
-  "title": "Design System: 饭饭 · 校园智能体",
+  "title": "Design System: 师小大 · 校园智能体",
   "extensions": {
     "colorMeta": {
       "paper-bg": {
@@ -229,7 +229,7 @@
       "kind": "button",
       "refersTo": "entry-submit",
       "description": "入口主要行动。",
-      "html": "<button class=\"ds-submit\">登录饭饭 <span aria-hidden=\"true\">→</span></button>",
+      "html": "<button class=\"ds-submit\">登录师小大 <span aria-hidden=\"true\">→</span></button>",
       "css": ".ds-submit{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:52px;padding:13px 20px;border:0;border-radius:12px;background:var(--entry-red,#303030);color:var(--entry-on-red,#ffffff);font-size:15px;transition:background .2s}.ds-submit:hover{background:var(--entry-red-hover,#111111)}.ds-submit:focus-visible{outline:2px solid var(--entry-red,#303030);outline-offset:5px}.ds-submit:active{transform:translateY(1px)}"
     },
     {

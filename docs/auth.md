@@ -2,6 +2,8 @@
 
 公开首页为 `/`；`/login` 和 `/register` 使用同一产品入口页面，分别选择登录、注册表单。下方问答、引用和星图是标注的交互示例，不调用模型或读取真实业务数据。
 
+普通用户常规登录后进入问学，管理员进入 `/admin/dashboard`。使用临时密码的账号须先修改密码。
+
 ## 首次启用
 
 在项目 Python 环境中安装锁定依赖，配置 `.env`，随后重启后端：
@@ -41,13 +43,16 @@ python -m auth.bootstrap
 | 对话、深度思考、重新生成、个人记忆、图片 | 仅自己的数据 | 仅自己的数据 |
 | 文档查看与 AI 自动检索 | public 且 ready 的文档 | 所有 ready 文档 |
 | 星图节点、关联及文档统计 | 仅公开文档 | 全部可用文档 |
+| 回答点赞、点踩及撤销 | 自己的会话 | 自己的会话 |
+| 提交意见反馈、点踩补充反馈 | 有 | 无 |
+| 反馈管理、运营看板、Token 用量与日志 | 无 | 有 |
 | 独立知识检索 `/admin/search` | 无 | 有 |
 | 文档上传、同步、删除、可见性 | 无 | 有 |
 | 账号管理 `/admin/users` | 无 | 有 |
 
 `public` 指全体登录用户，匿名访问仍需登录。原有文档迁入时默认 public，新上传默认 admin。管理员在典藏详情中调整范围，查看、后续检索和星图立即遵守新权限。已经生成的历史回答不追溯改写，来源目标重新验证当前权限。
 
-管理员没有读取他人会话、记忆和图片的专用接口。新增看板时只应聚合对话次数与用量，不返回个人内容。数据看板和系统日志管理页面不属于本轮。
+个人会话、长期记忆和聊天图片仍按账号归属授权。反馈说明及反馈附件是用户主动提交的资料，管理员可在反馈管理中查看。附件读取只允许提交者或管理员。运营看板仅提供统计数据和必要的审计元数据，账号标识脱敏展示。管理员接口对普通账号返回 403。
 
 ## 认证接口
 
@@ -62,6 +67,8 @@ python -m auth.bootstrap
 | `POST /api/admin/users` | `{username,password,role}`，创建临时密码账号 |
 | `PATCH /api/admin/users/{id}` | `{role?,enabled?}`，撤销该账号现有登录 |
 | `POST /api/admin/users/{id}/reset-password` | `{password}`，下次必须改密 |
+| `GET /api/admin/feedback` | 按状态、类别、来源、日期或完整用户 ID 分页查询反馈 |
+| `PUT /api/admin/feedback/{id}/status` | `{processed: boolean}`，切换反馈处理状态 |
 | `POST /api/admin/knowledge/search` | `{query,mode?,top_k?,top_n?}`，管理员独立检索 |
 | `GET /api/admin/model-settings` | 查看全站聊天模型选择、可选目录、密钥配置状态及失效提示 |
 | `PUT /api/admin/model-settings` | `{provider,model}`，更新全站聊天模型选择 |

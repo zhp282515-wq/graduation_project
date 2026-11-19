@@ -400,6 +400,9 @@ export const useConversationStore = defineStore('conversation', () => {
         assistant.text = content
         assistant.sources = sources
         assistant.id = final.message_id ?? null
+        assistant.sessionId = state.sessionId
+        assistant.revision = final.revision ?? 0
+        assistant.rating = null
         assistant.tokenTotal = Number.isFinite(final.total_tokens) ? final.total_tokens : assistant.tokenTotal
         assistant.createdAt = new Date().toISOString()
         assistant.canRegenerate = Boolean(final.message_id)

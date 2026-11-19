@@ -356,9 +356,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </div>
           <div v-else-if="!filtered.length" class="empty">
             <p class="empty-title">{{ keyword ? '没有匹配的会话' : '还没有任何会话' }}</p>
-            <p class="empty-body">
-              {{ keyword ? '换一个关键词，或清空搜索查看全部档案。' : '问学里的第一次提问会自动建立一个会话。' }}
-            </p>
+            <p v-if="keyword" class="empty-body">换一个关键词，或清空搜索查看全部档案。</p>
             <button v-if="keyword" type="button" class="btn btn--sm" @click="keyword = ''">清空搜索</button>
           </div>
 

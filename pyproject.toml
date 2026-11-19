@@ -1,7 +1,7 @@
 [project]
 name = "project"
 version = "0.1.0"
-description = "饭饭：基于 LangGraph 的江西师范大学校园智能助手"
+description = "师小大：基于 LangGraph 的江西师范大学校园智能助手"
 requires-python = ">=3.13"
 dependencies = [
     "PyJWT>=2.10,<3",

@@ -1,5 +1,6 @@
 """Real PostgreSQL integration tests; every row lives in a disposable schema."""
 import json
+import base64
 import os
 import threading
 import unittest
@@ -65,7 +66,7 @@ class AuthIntegrationTests(unittest.TestCase):
         self.overrides = main.app.dependency_overrides.copy()
         self.addCleanup(lambda: (main.app.dependency_overrides.clear(), main.app.dependency_overrides.update(self.overrides)))
         with self.pool.connection() as conn:
-            conn.execute('TRUNCATE app_users,auth_attempts,upload_owners,sessions,messages,memories,saved_notes,kb_documents,app_migrations CASCADE')
+            conn.execute('TRUNCATE app_users,auth_attempts,upload_owners,sessions,messages,memories,saved_notes,kb_documents,app_migrations,feedback_entries,answer_ratings CASCADE')
             repo=UserRepository(conn)
             self.admin=repo.create('administrator',self.hashed,'admin')
             self.alice=repo.create('alice',self.hashed)
@@ -97,6 +98,95 @@ class AuthIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         client.headers['x-csrf-token']=response.json()['csrf_token']
         return response
+
+    def test_feedback_attachment_permissions_and_idempotency(self):
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jAtkAAAAASUVORK5CYII=")
+        self.login("alice")
+        form = {"submission_id": str(uuid.uuid4()), "category": "bug", "description": "显示异常"}
+        first = self.client.post("/api/feedback", data=form, files={"attachments": ("sample.png", png, "image/png")})
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(self.client.post("/api/feedback", data=form).json(), first.json())
+        invalid = self.client.post("/api/feedback", data={**form, "submission_id": str(uuid.uuid4())},
+                                   files={"attachments": ("fake.png", b"<svg></svg>", "image/png")})
+        self.assertEqual(invalid.status_code, 415)
+        self.assertEqual(self.client.get("/api/admin/feedback").status_code, 403)
+        self.assertEqual(self.client.get("/api/admin/dashboard/overview").status_code, 403)
+        uri = f"/api/feedback/{first.json()['id']}/images/1"
+        self.assertEqual(self.client.get(uri).content, png)
+        self.login("bobby")
+        self.assertEqual(self.client.get(uri).status_code, 404)
+        self.login("administrator")
+        self.assertEqual(self.client.get(uri).headers["x-content-type-options"], "nosniff")
+        deleted = self.client.delete(f"/api/admin/users/{self.alice['id']}")
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        rows = self.client.get("/api/admin/feedback", params={"user_id": self.alice["id"]}).json()["items"]
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["username"])
+
+    def test_vote_versions_retries_and_dislike_feedback(self):
+        with self.pool.connection() as conn:
+            repo = PostgresSessionRepository(conn)
+            answer = repo.complete_turn(self.session.id, "历史回答")
+        self.login("alice")
+        path = f"/api/sessions/{self.session.id}/messages/{answer.id}/rating"
+        for _ in range(2):
+            self.assertEqual(self.client.put(path, json={"revision": 0, "vote": "dislike"}).json()["vote"], "dislike")
+        form = {"submission_id": str(uuid.uuid4()), "category": "answer", "reason": "unresolved",
+                "message_id": answer.id, "revision": 0}
+        response = self.client.post("/api/feedback", data=form)
+        self.assertEqual(response.status_code, 201, response.text)
+        with self.pool.connection() as conn:
+            repo = PostgresSessionRepository(conn)
+            self.assertEqual(repo.get_messages(self.alice["id"], self.session.id)[-1].rating, "dislike")
+            new = repo.replace_answer(self.session.id, answer.id, "重新生成", token_usage=None, sources=[])
+            self.assertEqual(new.revision, 1)
+            self.assertIsNone(repo.get_messages(self.alice["id"], self.session.id)[-1].rating)
+        self.assertEqual(self.client.put(path, json={"revision": 0, "vote": "like"}).status_code, 409)
+        self.assertEqual(self.client.put(path, json={"revision": 1, "vote": "like"}).status_code, 200)
+        self.assertEqual(self.client.put(path, json={"revision": 1, "vote": None}).status_code, 200)
+        self.login("administrator")
+        trend = self.client.get("/api/admin/feedback/trend").json()["days"][-1]
+        self.assertEqual((trend["like"], trend["dislike"]), (0, 1))
+
+    def test_feedback_processing_is_persistent_and_admin_only(self):
+        self.login("alice")
+        form = {"submission_id": str(uuid.uuid4()), "category": "suggestion", "description": "处理状态测试"}
+        created = self.client.post("/api/feedback", data=form)
+        self.assertEqual(created.status_code, 201, created.text)
+        path = f"/api/admin/feedback/{created.json()['id']}/status"
+        self.assertEqual(self.client.put(path, json={"processed": True}).status_code, 403)
+        self.login("administrator")
+        self.assertEqual(self.client.post("/api/feedback", data=form).status_code, 403)
+        self.assertFalse(self.client.get("/api/admin/feedback").json()["items"][0]["processed"])
+        for processed in (True, True, False):
+            self.assertEqual(self.client.put(path, json={"processed": processed}).json(), {"processed": processed})
+            self.assertEqual(self.client.get("/api/admin/feedback").json()["items"][0]["processed"], processed)
+        self.assertEqual(self.client.put("/api/admin/feedback/0/status", json={"processed": True}).status_code, 404)
+
+    def test_feedback_status_filter_includes_implicit_pending_and_combines_with_category(self):
+        self.login("alice")
+        ids = []
+        for category in ("bug", "suggestion", "bug"):
+            response = self.client.post("/api/feedback", data={
+                "submission_id": str(uuid.uuid4()), "category": category, "description": "筛选测试",
+            })
+            self.assertEqual(response.status_code, 201, response.text)
+            ids.append(response.json()["id"])
+        self.assertEqual(self.client.get("/api/admin/feedback?status=pending").status_code, 403)
+        self.login("administrator")
+        for entry_id, processed in ((ids[1], False), (ids[2], True)):
+            result = self.client.put(f"/api/admin/feedback/{entry_id}/status", json={"processed": processed})
+            self.assertEqual(result.status_code, 200, result.text)
+
+        def matching_ids(**params):
+            response = self.client.get("/api/admin/feedback", params=params)
+            self.assertEqual(response.status_code, 200, response.text)
+            return [item["id"] for item in response.json()["items"]]
+
+        self.assertEqual(matching_ids(status="all"), ids[::-1])
+        self.assertEqual(matching_ids(status="pending"), [ids[1], ids[0]])
+        self.assertEqual(matching_ids(status="processed"), [ids[2]])
+        self.assertEqual(matching_ids(status="pending", category="bug"), [ids[0]])
 
     def test_admin_logs_identity_privacy_and_paging(self):
         import tempfile

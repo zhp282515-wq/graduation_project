@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { request } from '../api/http'
+import ReportChart from '../components/ReportChart.vue'
 import UsageActivityChart from '../components/UsageActivityChart.vue'
 import Icon from '../components/ui/Icon.vue'
 
@@ -11,6 +12,7 @@ const clock = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour
 const calendar = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric', weekday: 'long' })
 const dayName = day => calendar.format(new Date(day.date + 'T12:00:00+08:00'))
 const role = ref('all'), period = ref(1), expanded = ref(false)
+const trendPeriod = ref(30)
 const report = ref(null), loading = ref(true), error = ref(''), selected = ref(29)
 const activity = ref(null), activityError = ref('')
 let timer, controller, activityController
@@ -29,6 +31,15 @@ async function refreshActivity() {
 function refreshAll() { refresh(); refreshActivity() }
 watch(role, () => { activity.value = null; refreshActivity() })
 const selectedDay = computed(() => report.value?.days[selected.value])
+const trendDays = computed(() => report.value?.days.slice(-trendPeriod.value) || [])
+const trendTotal = computed(() => trendDays.value.some(day => day.total !== null)
+  ? trendDays.value.reduce((sum, day) => sum + (day.total ?? 0), 0)
+  : null)
+const trendSeries = computed(() => [{
+  key: 'total',
+  label: '每日用量',
+  color: { all: 'var(--log-info)', user: 'var(--warm)', admin: 'var(--cool)' }[role.value],
+}])
 const range = computed(() => {
   const recorded = (report.value?.days || []).map(day => day.total).filter(value => value > 0)
   return recorded.length ? [Math.min(...recorded), Math.max(...recorded)] : [0, 0]
@@ -141,6 +152,18 @@ onBeforeUnmount(() => { clearInterval(timer); activityController?.abort(); contr
           </li></ol>
           <button v-if="report.rankCount > 5" class="more" @click="toggleAll">{{ expanded ? '收起' : '查看全部（' + full(report.rankCount) + '）' }}</button>
         </section>
+
+        <section class="panel token-trend">
+          <header>
+            <h2>Token 用量趋势</h2>
+            <div class="tabs" aria-label="用量趋势时间段">
+              <button v-for="days in [7, 30]" :key="days" type="button" :aria-pressed="trendPeriod === days"
+                @click="trendPeriod = days">{{ days }} 天</button>
+            </div>
+          </header>
+          <strong v-if="trendTotal !== null" class="trend-total">{{ full(trendTotal) }} <small>tokens</small></strong>
+          <ReportChart title="Token 用量趋势" :points="trendDays" :series="trendSeries" unit=" tokens" />
+        </section>
       </template>
       <UsageActivityChart v-for="kind in ['tools','messages']" :key="kind" :kind="kind"
         :report="activity" :error="activityError" @retry="refreshActivity" />
@@ -201,6 +224,8 @@ li { display:grid; grid-template-columns:18px minmax(100px,1fr) minmax(32px,2fr)
 .badge { color:var(--cool); font-size:10px; }
 li b { text-align:right; font-variant-numeric:tabular-nums; }
 .more { margin-top:10px; font-size:12px; }
+.trend-total { display:block; font-size:clamp(20px,3vw,32px); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.trend-total small { font-weight:400; }
 .message { padding:16px 0; color:var(--ink-3); }
 .skeletons i { min-height:120px; border-radius:10px; }
 .matrix-placeholder { grid-column:1/-1; }

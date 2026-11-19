@@ -36,6 +36,7 @@ def get_current_user(request: Request):
     if not user:
         raise HTTPException(401, '登录已失效，请重新登录')
     request.state.audit_actor = user["id"]
+    request.state.audit_role = user["role"]
     if request.method not in ('GET', 'HEAD', 'OPTIONS'):
         check_origin(request)
         if not hmac.compare_digest(request.headers.get('x-csrf-token', ''), settings.csrf(claims['jti'])):

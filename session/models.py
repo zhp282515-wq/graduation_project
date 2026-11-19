@@ -31,6 +31,8 @@ class Message:
     images: list[str] | None = None
     sources: list[dict[str, Any]] | None = None
     reply_to_message_id: int | None = None
+    revision: int = 0
+    rating: str | None = None
 
 
 @dataclass

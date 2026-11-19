@@ -18,7 +18,7 @@ from auth.security import Settings
 from auth.repository import UserRepository
 from auth.policy import ScopedRegistry, ScopedKnowledge, allowed_documents, require_document
 from typing import Literal
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, nullcontext
 
 from dotenv import load_dotenv
 
@@ -60,6 +60,9 @@ from utils.conversation import saved_history
 from api.admin_logs import AuditMiddleware, router as logs_router
 from session.admin_logs import start_logs
 from api.activity import setup_activity
+from api.feedback import router as feedback_router
+from api.operations import OperationsReports, router as operations_router
+from session.operations import AnswerRun, EVENT, OperationsWriter, setup as setup_operations
 from api.usage import Reports, router as usage_router
 from session.usage import Attribution, UsageWriter, setup as setup_usage
 
@@ -146,6 +149,7 @@ async def lifespan(app: FastAPI):
 
         with pg_pool.connection() as conn:
             PostgresSessionRepository(conn).setup()
+            setup_operations(conn)
             UserRepository(conn).setup()
             ModelSettingsRepository(conn).setup()
             kb_repo = KbDocumentRepository(conn)
@@ -184,6 +188,12 @@ async def lifespan(app: FastAPI):
             logger.exception("Token 统计初始化失败")
         app.state.runs = KeyedLocks()
         app.state.pg_pool = pg_pool
+        app.state.operations_writer = OperationsWriter(pg_pool)
+        resources.callback(delattr, app.state, "operations_writer")
+        resources.callback(app.state.operations_writer.close)
+        app.state.operations_reports = OperationsReports(pg_pool)
+        resources.callback(delattr, app.state, "operations_reports")
+        resources.callback(app.state.operations_reports.close)
         # 知识星图：知识库的真实分片只读视图，构建在首次访问时触发并落盘缓存。
         app.state.starmap = StarMapBuilder(kb_service) if kb_service else None
         app.state.runtime = AgentRuntime(
@@ -268,6 +278,13 @@ def update_model_settings(body: ModelSettingsUpdate, request: Request, user: dic
 
 app.include_router(auth_router)
 app.include_router(usage_router)
+app.include_router(feedback_router)
+app.include_router(operations_router)
+
+
+def operations_run(request, user):
+    writer = getattr(request.app.state, "operations_writer", None)
+    return AnswerRun(writer, user) if writer else None
 
 
 def attribution(request, user, session_id=None):
@@ -352,6 +369,7 @@ async def chat(
     resources = ExitStack()
 
     actor = attribution(request, user, req.session_id)
+    operations = operations_run(request, user)
 
     def prepare_run():
         conn = resources.enter_context(request.app.state.pg_pool.connection())
@@ -368,18 +386,13 @@ async def chat(
             model_resolver=lambda: _resolve_chat_model(conn),
         )
         service._principal = {key: user[key] for key in ("id", "role", "_sid")}
-        return service.send_message(
-            user["id"],
-            req.session_id,
-            build_query(
-                text = req.text,
-                images = [str(p) for p in abs_images],
-            ),
-            text = req.text,
-            images = [str(p) for p in abs_images],
-            image_urls = [f"/uploads/{Path(p).name}" for p in req.images],
-            reasoning = req.reasoning,
-        )
+        with operations.bind() if operations else nullcontext():
+            return service.send_message(
+                user["id"], req.session_id,
+                build_query(text=req.text, images=[str(p) for p in abs_images]),
+                text=req.text, images=[str(p) for p in abs_images],
+                image_urls=[f"/uploads/{Path(p).name}" for p in req.images], reasoning=req.reasoning,
+            )
 
     try:
         stream = await run_in_threadpool(actor.run, prepare_run)
@@ -399,16 +412,35 @@ async def chat(
         resources.close()
         raise
 
-    return chat_response(stream, resources, background, actor, request)
+    return chat_response(stream, resources, background, actor, request, operations)
 
 
-def chat_response(stream, resources: ExitStack, background: BackgroundTasks, actor: Attribution, request: Request):
+def chat_response(stream, resources: ExitStack, background: BackgroundTasks, actor: Attribution, request: Request,
+                  operations: AnswerRun | None = None):
+    def next_event():
+        with operations.bind() if operations else nullcontext():
+            return actor.run(next, stream, None)
+
     def sse():
-        while (event := actor.run(next, stream, None)) is not None:
+        while (event := next_event()) is not None:
             if event.get("type") == "done":
                 request.state.chat_completed = True
+            if operations:
+                try:
+                    operations.event(event)
+                except Exception:
+                    logger.error("回答运营埋点失败")
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-    return ChatStreamingResponse(sse(), run=stream, cleanup=resources.close,
+
+    def cleanup():
+        resources.close()
+        if operations:
+            try:
+                operations.finish(error="interrupted")
+            except Exception:
+                logger.error("断开响应运营埋点失败")
+
+    return ChatStreamingResponse(sse(), run=stream, cleanup=cleanup,
                                  background=background, media_type="text/event-stream")
 
 
@@ -418,6 +450,7 @@ async def regenerate_message(
     user: dict = Depends(get_current_user),
 ):
     resources = ExitStack()
+    operations = operations_run(request, user)
     def prepare_run():
         conn = resources.enter_context(request.app.state.pg_pool.connection())
         service = SessionService(PostgresSessionRepository(conn), request.app.state.runtime,
@@ -437,7 +470,7 @@ async def regenerate_message(
     except BaseException:
         resources.close()
         raise
-    return chat_response(stream, resources, background, attribution(request, user, session_id), request)
+    return chat_response(stream, resources, background, attribution(request, user, session_id), request, operations)
 
 
 
@@ -981,6 +1014,7 @@ def run_ingest_job(
         title: str | None,
         display_name: str,
         retry_failed: bool = False,
+        operations_writer=None,
 ) -> None:
     """后台入库。同步函数由 Starlette 丢进线程池，不会阻塞事件循环。
 
@@ -1018,6 +1052,8 @@ def run_ingest_job(
         logger.info("知识库入库完成：%s（%d 块）", resolved_name, count)
     except Exception as exc:
         logger.exception("知识库入库失败 file_md5=%s", file_md5)
+        if operations_writer:
+            operations_writer.submit(EVENT, ("ingest_failed", file_md5, None))
         try:
             with pool.connection() as conn:
                 KbDocumentRepository(conn).mark_failed(
@@ -1110,7 +1146,9 @@ async def upload_knowledge_document(
         title,
         display_name,
         retry_failed,
+        getattr(request.app.state, "operations_writer", None),
     )
+    request.state.audit_object = file_md5
     return {
         "file_md5": file_md5,
         "file_name": display_name,

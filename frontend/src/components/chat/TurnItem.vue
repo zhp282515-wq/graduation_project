@@ -1,6 +1,5 @@
 <script setup>
 import { computed } from 'vue'
-import { formatClock } from '../../utils/format'
 import AnswerBlock from './AnswerBlock.vue'
 import Icon from '../ui/Icon.vue'
 
@@ -13,8 +12,6 @@ const props = defineProps({
 
 const emit = defineEmits(['regenerate', 'open-source', 'open-sources', 'refill'])
 
-const pad = computed(() => String(props.index).padStart(2, '0'))
-const time = computed(() => formatClock(props.turn.createdAt))
 const live = computed(() => props.isCurrent && Boolean(props.run.active))
 const details = computed(() => (props.isCurrent ? props.run : props.turn.trace) || {})
 const reasoning = computed(() => details.value.reasoning || '')
@@ -22,68 +19,55 @@ const steps = computed(() => details.value.steps || [])
 const phase = computed(() => details.value.phase || '')
 const error = computed(() => details.value.error || '')
 const finishReason = computed(() => details.value.finishReason || '')
-const elapsedMs = computed(() => details.value.elapsedMs || 0)
 </script>
 
 <template>
-  <section class="turn" :data-live="live">
-    <div class="turn-gutter">
-      <span class="gutter-no mono">问 {{ pad }}</span>
-      <span v-if="time" class="gutter-time mono">{{ time }}</span>
-      <span v-if="live && run.active" class="gutter-live mono">进行中</span>
+  <section class="turn">
+    <div v-if="turn.userText || turn.images?.length" class="question">
+      <p v-if="turn.userText" class="q-text">{{ turn.userText }}</p>
+      <div v-if="turn.images?.length" class="q-images">
+        <a
+          v-for="(image, imageIndex) in turn.images"
+          :key="`${image}-${imageIndex}`"
+          class="q-image"
+          :href="image"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <img :src="image" alt="提问时附带的图片" loading="lazy" decoding="async" />
+        </a>
+      </div>
     </div>
 
-    <div class="turn-col">
-      <div v-if="turn.userText || turn.images?.length" class="question">
-        <p v-if="turn.userText" class="q-text">{{ turn.userText }}</p>
-        <div v-if="turn.images?.length" class="q-images">
-          <a
-            v-for="(image, imageIndex) in turn.images"
-            :key="`${image}-${imageIndex}`"
-            class="q-image"
-            :href="image"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <img :src="image" alt="提问时附带的图片" loading="lazy" decoding="async" />
-          </a>
-        </div>
-      </div>
-
-      <div v-if="turn.assistant" class="response">
-        <AnswerBlock
-          :answer="turn.assistant"
-          :live="live"
-          :reasoning="reasoning"
-          :steps="steps"
-          :phase="phase"
-          :error="error"
-          :finish-reason="finishReason"
-          :elapsed-ms="elapsedMs"
-          :index="index"
-          @regenerate="emit('regenerate', turn.key)"
-          @refill="emit('refill', turn)"
-          @open-source="emit('open-source', $event)"
-          @open-sources="emit('open-sources', turn.assistant.sources)"
-        />
-      </div>
-      <div v-else class="response awaiting">
-        <p class="awaiting-text mono">
-          <Icon name="sparkle" :size="12" />
-          正在等待 Agent 的回应…
-        </p>
-        <span class="skeleton bar" />
-        <span class="skeleton bar short" />
-      </div>
+    <div v-if="turn.assistant" class="response">
+      <AnswerBlock
+        :answer="turn.assistant"
+        :live="live"
+        :reasoning="reasoning"
+        :steps="steps"
+        :phase="phase"
+        :error="error"
+        :finish-reason="finishReason"
+        :index="index"
+        @regenerate="emit('regenerate', turn.key)"
+        @refill="emit('refill', turn)"
+        @open-source="emit('open-source', $event)"
+        @open-sources="emit('open-sources', turn.assistant.sources)"
+      />
+    </div>
+    <div v-else class="response awaiting">
+      <p class="awaiting-text mono">
+        <Icon name="sparkle" :size="12" />
+        正在等待 Agent 的回应…
+      </p>
+      <span class="skeleton bar" />
+      <span class="skeleton bar short" />
     </div>
   </section>
 </template>
 
 <style scoped>
 .turn {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 26px;
   padding: 30px 0 34px;
   border-top: 1px solid var(--line);
 }
@@ -91,39 +75,6 @@ const elapsedMs = computed(() => details.value.elapsedMs || 0)
 .turn:first-child {
   border-top: 0;
   padding-top: 8px;
-}
-
-.turn-gutter {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 5px;
-  padding-top: 3px;
-  text-align: right;
-}
-
-.gutter-no {
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  color: var(--ink-3);
-}
-
-.gutter-time {
-  font-size: 11px;
-  color: var(--ink-4);
-  letter-spacing: 0.04em;
-}
-
-.gutter-live {
-  margin-top: 3px;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  color: var(--accent);
-}
-
-.turn-col {
-  min-width: 0;
-  max-width: var(--reading-w);
 }
 
 .question {
@@ -210,24 +161,7 @@ const elapsedMs = computed(() => details.value.elapsedMs || 0)
 
 @media (max-width: 1180px) {
   .turn {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
     padding: 26px 0 30px;
-  }
-
-  .turn-gutter {
-    flex-direction: row;
-    align-items: baseline;
-    gap: 10px;
-    padding-bottom: 10px;
-  }
-
-  .turn-col {
-    max-width: 100%;
-  }
-
-  .gutter-live {
-    margin-top: 0;
   }
 }
 </style>

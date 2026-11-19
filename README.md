@@ -1,6 +1,6 @@
-# 星野台 · 江西师范大学校园助手（毕业设计）
+# 师小大 · 江西师范大学校园助手（毕业设计）
 
-星野台（JXNU OBSERVATORY）是基于 LangGraph 的校园智能助手：后端是 Agent + FastAPI 接口层，前端是 Vue 3 单页应用。四个视图——**问学**（对话）、**典藏**（知识库）、**记忆**（长期记忆）、**星野**（知识星图）；支持多轮工具调用、SSE 流式输出、会话持久化、图片多模态输入、校园知识库检索，以及把全部知识分片映射成可探索的三维星图。
+师小大是基于 LangGraph 的校园智能助手：后端是 Agent + FastAPI 接口层，前端是 Vue 3 单页应用。四个视图——**问学**（对话）、**典藏**（知识库）、**记忆**（长期记忆）、**星野**（知识星图）；支持多轮工具调用、SSE 流式输出、会话持久化、图片多模态输入、校园知识库检索，以及把全部知识分片映射成可探索的三维星图。
 
 ## 当前基线与进度
 
@@ -15,8 +15,10 @@
 | 长期记忆抽取、注入、查看、编辑、删除 | 已有实现 |
 | 知识库上传、任务状态、分页筛选、切片查看、删除、同步 | 已有实现 |
 | PostgreSQL 业务连接池与 checkpoint 连接池 | 已有实现 |
-| 真实登录、管理员权限 | 已接入 JWT、Argon2id、账号管理及文档权限；初始化见 docs/auth.md |
-| 用户反馈、正式评测集与 RAGAS | 尚未形成完整实现 |
+| 登录与管理员权限 | 已接入 JWT、Argon2id、账号管理及文档权限，参见 [账号与权限](docs/auth.md) |
+| 回答评价与用户反馈 | 已支持点赞、点踩、图片附件、处理状态和状态筛选 |
+| 管理员运营看板、Token 用量与日志 | 已提供独立页面，管理员登录后进入运营看板 |
+| 正式评测集与 RAGAS | 待建设 |
 
 “已有实现”不代表已通过真实外部服务验收。已有技术验证记录、毕业设计计划和架构草稿的状态可能滞后，功能进度以当前代码为准。
 
@@ -73,19 +75,20 @@
 ## 功能特性
 
 - **多轮 Agent 循环**：LangGraph `StateGraph` 编排，LLM 自主决定是否调用工具，带最大轮次限制与兜底总结
-- **流式输出**：`stream_mode="custom"` 推送增量事件，经 SSE 转发给浏览器；聊天页显示回答、当前工具名称及底部来源汇总，尚未展示推理增量
+- **流式输出**：`stream_mode="custom"` 经 SSE 推送回答、推理增量和工具事件，问学页可查看工具轨迹和引用来源
 - **可插拔工具系统**：天气查询、联网搜索、校历查询、校园知识库检索，带工具 schema 检查和参数必填项、顶层类型检查；同一轮的多个工具可并行执行
 - **校历结构化查询**：教学周、节假日、补课、校历中的考试日期区间走 PostgreSQL 查询；尚无按课程查询个人考试安排的工具
 - **会话持久化**：基于 LangGraph PostgreSQL Checkpointer 保存图状态；删除会话时先清理 checkpoint，再删业务数据。客户端断流后的取消与恢复行为仍待验收
 - **历史压缩**：长对话按 token 占用自动折叠早期轮次为滚动摘要，完整历史仍保留给前端展示
-- **多模态输入**：图片经服务端上传落盘后编码为 data URL 送模型，前端通过静态托管回显
-- **多模型接入**：抽象 `BaseProvider` 接口，已接入阿里云 DashScope（Qwen）与 OpenAI
+- **多模态输入**：图片经服务端上传落盘后编码为 data URL 送模型，前端通过检查归属的接口回显
+- **多模型接入**：通过 `BaseProvider` 支持 DeepSeek、阿里云 DashScope（Qwen）与 OpenAI
 - **长期记忆**：回答保存并结束响应后，后台抽取用户事实与偏好，后续对话注入已保存的记忆；前端可查看、编辑和删除。刚回答结束时记忆可能尚未生成，重新打开记忆面板刷新
 - **知识库管线**：Web 上传支持 MD / TXT / PDF / DOC / DOCX，MD / TXT 本地转换，其余交给 MinerU 云 API；结构切块后按文本嵌入，以文件 md5 去重。图片块只使用图注和描述文字，不做图片向量入库
 - **混合检索**：Milvus 稠密向量 + BM25 稀疏向量，RRF 融合后接重排模型；重排阈值当前为 0.3，需用真实评测集校准，不能据此保证答案有依据
 - **知识库管理**：上传后台入库、阶段状态、失败记录、文档搜索与格式筛选、分页、切片查看、删除、Milvus 登记同步；服务重启后将中断任务标记为失败
-- **Web 前端（星野台 / JXNU OBSERVATORY）**：四个视图——问学、典藏、记忆、星野；会话分组与搜索、多会话并行的后台流式、Markdown + 代码高亮、思考过程折叠、工具轨迹、出处抽屉、图片上传；纸本 / 星夜双主题
+- **Web 前端（师小大）**：四个视图——问学、典藏、记忆、星野；会话分组与搜索、多会话并行的后台流式、Markdown + 代码高亮、思考过程折叠、工具轨迹、出处抽屉、图片上传；纸本 / 星夜双主题
 - **知识星图（星野）**：把知识库全部真实分片映射为可探索的三维星图，支持缩放 / 平移 / 拾取、全文搜索定位、按文档与格式筛选、分片详情与文档跳转，并区分「真实归属 / 真实顺序 / 语义相似 / 纯视觉排布」四类关系
+- **反馈与运营**：普通用户可提交意见反馈，回答支持点赞和点踩。管理员可处理反馈、查看赞踩趋势，并从运营看板、用量和日志排查问题。
 
 ## 界面截图
 
@@ -166,7 +169,7 @@ Graduation-Project/
 │   ├── import_academic_calendar.py   # 校历 YAML → PostgreSQL
 │   └── academic_calendar_schema.sql  # 校历表结构
 ├── utils/                      # 日志、图片编码、提示词加载、md 转换等
-├── frontend/                   # Vue 3 前端（星野台）
+├── frontend/                   # Vue 3 前端（师小大）
 │   ├── src/
 │   │   ├── main.js             # 应用入口（Pinia + Router）
 │   │   ├── App.vue             # 外壳：竖排导航、会话档案、命令面板、Toast / 确认框
@@ -337,8 +340,30 @@ npm run dev            # http://localhost:5173
 - 查询已导入校历范围内的周次或节假日，检查工具结果。
 - 上传一份有正文的测试文档，等待 `ready`，核对切片，再提问其中内容；同时检查无依据问题的回答。
 - 明确告诉助手一条长期偏好，等待后台抽取完成后重新打开记忆设置，测试查看、编辑、删除；流结束时不保证新记忆已经可见。
+- 用普通账号提交一条带图片的反馈，对已保存的回答点踩并选择是否补充反馈。用管理员账号核对登录落点、附件访问、状态切换和筛选，以及用量趋势和日志入口。
 
 上述聊天、解析、向量化和记忆抽取会访问外部服务，可能产生 API 费用。真实服务验收需单独执行，本轮回归测试使用模拟依赖。
+
+## 使用反馈与管理员看板
+
+普通账号登录后默认进入问学。侧栏「反馈」可提交类别、说明及最多 3 张图片，支持 JPEG、PNG、GIF、WebP，单张上限 10 MB。已保存的回答可点赞、点踩、切换或撤销。评价关联回答版本，重新生成成功后，新回答可以独立评价。普通用户点踩后也可补充原因、说明或图片。
+
+管理员常规登录后默认进入运营看板。使用本机 Docker 更新时，运行 `docker compose up -d --build backend frontend`，然后访问 [登录页](http://127.0.0.1:8080/login)。
+
+| 管理员页面 | 用途 |
+| --- | --- |
+| `/admin/dashboard` 运营看板 | 概览、内容与质量、知识库、系统、安全五个页签。按上海自然日查看今日、近 7 天或近 30 天，支持「全部／仅用户」。 |
+| `/admin/feedback` 反馈管理 | 查看用户主动提交的说明和图片，以及近 7 天、近 30 天的赞踩趋势。反馈默认未处理，可改为已处理或改回，并按全部、未处理、已处理筛选。状态可和类别、来源、日期、完整用户 ID 一起筛选。 |
+| `/admin/usage` Token 用量 | 展示模型接口确认的 Token 用量，包含概览、热力图和用量榜。榜下提供每日 Token、工具调用和发送消息趋势。Token 用量显示完整数字，并随角色筛选。 |
+| `/admin/logs` 日志 | 查看运行和用户操作日志。模型调用标注用途、模型及可确认的用户 ID，日志级别和操作结果用颜色区分。 |
+
+运营看板使用聚合数据。知识库成功完成检索、全轮没有可用检索结果且最终无出处时，回答计入「没查到」。话题与热门关键词使用校园词表，疑似重复提问使用同一会话内 10 分钟内的文本相似度。安全页用「未接入」标记没有数据源的检测项。缺少历史覆盖的区间以空值或统计起始日期标明。
+
+后端启动时创建反馈和运营所需的表与索引，并启动每分钟运行的汇总、告警和过期清理任务。运营明细保留 90 天，历史日汇总及留存统计所需的活跃信息继续保留。
+
+- 运营历史回填可在部署后执行 `docker compose exec -T backend python -m scripts.backfill_operations`。本地 Python 可用 `uv run --locked --env-file .env python -m scripts.backfill_operations`。回填读取现存会话中可确认的提问、回答标识与时间，未知角色只进入「全部」。
+- 预览可将 `APP_ENV` 设为 `development`，将 `LANGGRAPH_POSTGRES_URI` 指向已完成初始化的本机 `*_dev` 数据库，再运行 `uv run --locked python -m scripts.seed_operations`。脚本生成近 60 天的演示数据。
+- 需要回滚时，先停用依赖新增表的后端版本并备份数据库，再按功能执行 [反馈回滚](scripts/rollback_feedback.sql) 或 [运营回滚](scripts/rollback_operations.sql)。回滚脚本会删除对应的新表和数据。
 
 ## HTTP 接口
 
@@ -352,6 +377,15 @@ npm run dev            # http://localhost:5173
 | DELETE | `/api/sessions/{id}` | 删除会话：先删 checkpoint 再删业务行；生成中返回 409 |
 | POST | `/api/chat` | SSE 流式对话，请求体 `{session_id, text, images, reasoning}`；同会话重复运行返回 409 |
 | POST | `/api/sessions/{id}/messages/{message_id}/regenerate` | 无请求体，返回同样的 SSE；只替换目标 AI 回复，生成中 409，目标或会话不存在 404，原问题或图片无法恢复 422 |
+| PUT | `/api/sessions/{id}/messages/{message_id}/rating` | 当前账号的回答评价，请求体 `{revision, vote}`，`vote` 为 `like`、`dislike` 或 `null`，过期版本返回 409 |
+| POST | `/api/feedback` | 普通用户提交 multipart 反馈。使用 `submission_id` 去重，点踩反馈可附回答版本和原因 |
+| GET | `/api/feedback/{entry_id}/images/{position}` | 提交人或管理员读取反馈附件 |
+| GET | `/api/admin/feedback`、`/api/admin/feedback/trend` | 分页反馈及每日评价趋势。列表 `status` 可选 `all`、`pending`、`processed` |
+| PUT | `/api/admin/feedback/{entry_id}/status` | 修改处理状态，请求体 `{processed: boolean}` |
+| GET | `/api/admin/dashboard/{tab}`、`/api/admin/dashboard/audit` | 分页签统计与管理员审计。`period` 可选 `1`、`7` 或 `30`，`role` 可选 `all` 或 `user` |
+| PUT | `/api/admin/dashboard/gaps/{keyword}` | 标记知识缺口，请求体 `{state}`，可选 `fixed` 或 `ignored` |
+| GET | `/api/admin/usage/{overview,trend,ranking,activity}` | Token 用量与活动统计。`role` 可选 `all`、`user` 或 `admin` |
+| GET | `/api/admin/logs` | 查看和筛选运行或用户操作日志 |
 | POST | `/api/upload` | 上传图片，仅 jpeg/png/gif/webp，上限 10MB，文件名由服务端 uuid 生成 |
 | GET | `/uploads/{name}` | 检查登录和归属，私有回显上传图片 |
 | GET | `/api/memories` | 当前用户的长期记忆 |
@@ -370,7 +404,7 @@ npm run dev            # http://localhost:5173
 
 `/api/chat` 收到的 `images` 是上传接口返回的相对路径（`data/uploads/xxx.png`）。服务端会 `resolve()` 后校验必须落在上传目录内，再编码成 data URL 送模型；落库和回显用 `/uploads/xxx.png`。两个地址分开是因为模型要能读文件、浏览器要能直接加载。
 
-历史消息返回服务端 `id`、`sources` 与 `reply_to_message_id`。SSE 的 `run_started` 补充 `user_message_id`；成功落库后的 `done.final_answer` 包含 `message_id`、`reply_to_message_id` 与 `sources`。知识库切片接口补充 `chunk_id`。原有事件名称及路径保持兼容。
+历史消息返回服务端 `id`、`sources`、`reply_to_message_id`，回答还包含当前 `revision` 和 `rating`。SSE 的 `run_started` 提供 `user_message_id`，成功落库后的 `done.final_answer` 提供 `message_id`、`reply_to_message_id` 与 `sources`，重新生成成功时还返回新的 `revision`。知识库切片接口提供 `chunk_id`。
 
 ## 知识库入库
 
@@ -403,7 +437,7 @@ uv run --locked python -m scripts.import_academic_calendar
 - 星图布局（质心 MDS + 径向压缩 + 星群分离 + 文档内 PCA）只是便于观看的空间整理：星体归属、`chunk_index` 顺序与语义连边是真实的，坐标距离不构成知识关联。语义连边取跨文档余弦 ≥ 0.75 的前 900 条，是启发式而非人工标注的关系。
 - 星图每次打开最多 1759 个点（当前库规模）一次读完；更大规模需要分页与按需渲染，接口已支持 `offset/limit`（前端已按 400/页分批绘制）。
 - 星图选中星体只做轻微推近（当前距离 ×0.88），以免旁边星体出画、无法连续切换；「复位视角」回到首帧取景机位而不是重新拟合一个近似机位。文档名标签在窄屏（< 900px）默认收起，可在抬头开关打开。
-- 当前下一步进行真实依赖下的稳定性与来源/重新生成验收，再推进逐句引用映射、评测、真实登录与角色权限、反馈功能。
+- 后续验收重点是实际模型与知识库服务下的稳定性、来源核对与正式评测集。
 
 ## 回归测试
 
@@ -416,11 +450,11 @@ uv run --locked python -m unittest discover -s tests -v
 前端单元测试在 `frontend/` 执行：
 
 ```bash
-npm test            # vitest run，58 例
+npm test            # 运行 Vitest
 npm run build       # 生产构建（Windows 需先把 TEMP 指到可写目录，见 frontend/README.md）
 ```
 
-后端 79 例、前端 58 例均使用模拟依赖，不需要数据库或模型密钥，验证生命周期、并发、事务调用边界、SSE 解析、Markdown 渲染、引用归并与星图 store 的筛选 / 搜索逻辑；不代替真实数据库事务和向量库一致性验收。业务运行仍需按上方手动验收步骤检查。
+单元测试模拟模型与向量服务。账号鉴权、反馈状态和运营统计的集成测试使用 `LANGGRAPH_POSTGRES_URI` 指向的 PostgreSQL，在独立 schema 中运行并于结束后清理。完整的业务链路按上方手动验收步骤检查。
 
 浏览器回归脚本（历史）：`tests/browser_*.cjs` 与 `tests/waiting_mock_server.cjs` 是旧版前端（`.msg-*`、`.knowledge-*` 选择器）的 Playwright CLI 脚本，未纳入仓库；第五轮的联调脚本是本地工作区 `_devtools/` 下的 Playwright Python 脚本（`flow_chat.py`、`flow_archive.py`、`flow_atlas.py`、`flow_theme.py`、`flow_mobile.py` 等），逐项结果记录在 [`DELIVERY.md`](DELIVERY.md)。
 
@@ -445,6 +479,6 @@ npm run build       # 生产构建（Windows 需先把 TEMP 指到可写目录�
 
 ## 产品入口与账号初始化
 
-首页 `/` 现为饭饭产品入口，包含登录 / 注册和可滚动的问答、引用、星图交互示例。已登录可进入问学，管理员另有账号管理与独立检索入口。
+首页 `/` 为师小大产品入口，包含登录 / 注册和可滚动的问答、引用、星图交互示例。普通用户默认进入问学，管理员默认进入运营看板。
 
 首次启用先备份数据库，在项目 Python 环境及仓库根目录执行 `python -m auth.bootstrap`，按提示设置首个管理员并接管旧演示数据。完整配置、接口及迁移说明见 [docs/auth.md](docs/auth.md)。

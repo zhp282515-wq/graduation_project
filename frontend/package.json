@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "江西师范大学校园智能体 · 星野台（Vue 3 重构版前端）",
+  "description": "江西师范大学校园智能体 · 师小大（Vue 3 重构版前端）",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

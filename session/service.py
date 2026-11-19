@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from session.models import DEFAULT_SESSION_TITLE, Memory, Message, Note, Session
+from session.operations import current_run
 from session.ports import AgentPort, SessionRepository
 from session.runs import DEFAULT_RUNS, KeyedLocks, RunStream
 from session.sources import normalize_sources
@@ -148,6 +149,11 @@ class SessionService:
                 session_id, "user", text,
                 images=image_urls if image_urls is not None else images,
             )
+            if operations := current_run.get():
+                try:
+                    operations.question(session_id, question, prefix)
+                except Exception:
+                    logger.error("提问运营埋点失败")
             if session.title == DEFAULT_SESSION_TITLE:
                 self._repo.update_session_title(user_id, session_id, text[:_AUTOTITLE_MAX_LEN] or "图片消息")
             return RunStream(self._stream(
@@ -277,6 +283,8 @@ class SessionService:
             pending_done = {**pending_done, "final_answer": {
                 **final, "message_id": saved.id, "reply_to_message_id": question_id, "sources": snapshots,
             }}
+            if revision := getattr(saved, "revision", 0):
+                pending_done["final_answer"]["revision"] = revision
         except Exception as exc:
             logger.exception("会话 %s 本轮执行失败", session_id)
             yield {

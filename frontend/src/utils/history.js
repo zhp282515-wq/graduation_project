@@ -62,6 +62,9 @@ export function buildTurns(messages) {
       null
     const assistant = {
       id: message.id ?? null,
+      sessionId: message.session_id,
+      revision: message.revision ?? 0,
+      rating: message.rating ?? null,
       text: message.content || '',
       sources: normalizeSources(message.sources),
       tokenTotal: readTokenTotal(message.token_usage),

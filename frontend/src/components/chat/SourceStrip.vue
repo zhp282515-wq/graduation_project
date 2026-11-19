@@ -165,13 +165,6 @@ onBeforeUnmount(() => stripEl.value?.removeEventListener('wheel', onWheel))
   color: var(--accent);
 }
 
-@media (min-width: 1180px) {
-  .source-strip {
-    /* 借用右侧为走栏预留的留白，让出处条比正文更宽一些 */
-    margin-right: calc(-1 * (var(--thread-gutter, 92px) + var(--thread-gap, 26px)));
-  }
-}
-
 @media (max-width: 640px) {
   .source-strip {
     flex-wrap: wrap;

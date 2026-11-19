@@ -3,11 +3,12 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { renderMarkdown } from '../../utils/markdown'
 import { copyText } from '../../utils/clipboard'
-import { formatDuration, formatNumber, plainText } from '../../utils/format'
+import { formatNumber, plainText } from '../../utils/format'
 import { sourceKindLabel } from '../../utils/citations'
 import { useNotesStore } from '../../stores/notes'
 import { useUiStore } from '../../stores/ui'
 import RunTrace from './RunTrace.vue'
+import AnswerRating from './AnswerRating.vue'
 import SourceStrip from './SourceStrip.vue'
 import BaseSheet from '../ui/BaseSheet.vue'
 import Icon from '../ui/Icon.vue'
@@ -20,7 +21,6 @@ const props = defineProps({
   phase: { type: String, default: '' },
   error: { type: String, default: '' },
   finishReason: { type: String, default: '' },
-  elapsedMs: { type: Number, default: 0 },
   index: { type: Number, default: 1 },
 })
 
@@ -57,8 +57,6 @@ const awaiting = computed(() => props.live && !hasText.value && !failed.value)
 const reasoningChars = computed(() => props.reasoning.trim().length)
 const showTrace = computed(() => props.steps.length > 0)
 const sources = computed(() => props.answer.sources || [])
-
-const elapsedLabel = computed(() => (props.elapsedMs ? formatDuration(props.elapsedMs) : ''))
 
 async function copyAnswer() {
   const text = plainText(props.answer.text)
@@ -212,6 +210,8 @@ async function onBodyClick(event) {
           <Icon name="refresh" :size="12" />
           重新生成
         </button>
+        <AnswerRating v-if="!streaming && answer.id && answer.sessionId"
+          :key="`${answer.id}:${answer.revision}`" :answer="answer" />
         <button
           v-if="sources.length"
           type="button"
@@ -222,10 +222,8 @@ async function onBodyClick(event) {
           {{ sources.length }} 条出处
         </button>
       </div>
-      <div class="foot-meta mono">
+      <div v-if="(live && streaming) || sources.length" class="foot-meta mono">
         <span v-if="live && streaming" class="live-tag"><span class="live-dot" />生成中</span>
-        <span v-else-if="elapsedLabel">{{ elapsedLabel }}</span>
-        <span v-if="answer.tokenTotal" class="meta-usage">{{ formatNumber(answer.tokenTotal) }} tokens</span>
         <span v-if="sources.length">{{ sourceKindLabel(sources[0]) }}</span>
       </div>
     </div>

@@ -32,7 +32,7 @@ let observer
 let frame = 0
 let reduced = false
 const examples = [
-  { question: '校园里的办事流程，应该从哪里找起？', answer: '从一个具体问题开始。饭饭会结合可访问的校园文档组织回答，并展示检索过程和文档来源。', excerpt: '输入事项名称或关键词，查阅相关文档；在回答的引用处核对文档名、章节和原文。' },
+  { question: '校园里的办事流程，应该从哪里找起？', answer: '从一个具体问题开始。师小大会结合可访问的校园文档组织回答，并展示检索过程和文档来源。', excerpt: '输入事项名称或关键词，查阅相关文档；在回答的引用处核对文档名、章节和原文。' },
   { question: '这段回答的依据，可以在哪里核对？', answer: '点击回答旁的引用，查看对应的文档片段。你也可以打开来源文档，继续阅读上下文。', excerpt: '引用保留文档名称、章节、页码或分片信息；可从来源面板定位到对应文档片段。' },
   { question: '很多份校园资料，怎样看清它们的联系？', answer: '在知识星图里，文档与分片形成可探索的空间。选择一颗星，查看它的内容与所属文档。', excerpt: '星体对应知识分片，星链连接文档内的顺序；语义连线用于呈现内容之间的相似关联。' },
 ]
@@ -75,8 +75,12 @@ async function submit() {
   try {
     await auth.authenticate(registering.value ? 'register' : 'login', { username: username.value.trim(), password: password.value })
     const target = route.query.redirect
-    const safe = typeof target === 'string' && target.startsWith('/') && !target.startsWith('//') && !target.includes('\\') && !/^\/(login|register|password)(\/|\?|$)/.test(target)
-    await router.replace(auth.user.must_change_password ? '/password' : safe ? target : '/inquiry')
+    const internal = typeof target === 'string' && target.startsWith('/') && !target.startsWith('//') && !target.includes('\\')
+    const destination = internal && router.resolve(target)
+    const allowed = destination && destination.name && !destination.meta.public
+      && destination.path !== '/password' && (!destination.meta.admin || auth.isAdmin)
+    const home = auth.isAdmin ? '/admin/dashboard' : '/inquiry'
+    await router.replace(auth.user.must_change_password ? '/password' : allowed ? destination.fullPath : home)
   } catch (err) { error.value = err.message || '暂时无法连接，请稍后重试' }
   finally { submitting.value = false }
 }
@@ -144,9 +148,9 @@ onBeforeUnmount(() => {
       <section class="entry-hero" aria-labelledby="entry-title">
         <div class="hero-story">
           <span class="hero-glyph" aria-hidden="true">问</span>
-          <div class="hero-edition"><span>饭饭 · 校园智能体</span><span>知识，从这里连接</span></div>
+          <div class="hero-edition"><span>师小大 · 校园智能体</span><span>知识，从这里连接</span></div>
           <h1 id="entry-title">从校园一问，<br />走进<span class="title-orbit">知识星图<svg viewBox="0 0 360 27" aria-hidden="true"><path d="M3 21 C95 1 245 2 355 12" /></svg></span>。</h1>
-          <p class="hero-description">让零散的校园资料，成为可以对话的知识。<br />向饭饭提问，沿着引用找到依据，在星图里发现联系。</p>
+          <p class="hero-description">让零散的校园资料，成为可以对话的知识。<br />向师小大提问，沿着引用找到依据，在星图里发现联系。</p>
           <div class="hero-proof" aria-label="从提问到来源的示例">
             <span class="proof-ask"><Icon name="inquiry" :size="19" /> 一个校园问题</span>
             <svg class="proof-route" viewBox="0 0 120 38" aria-hidden="true"><path d="M2 19H48Q58 19 65 10T84 19H117" /><circle cx="85" cy="19" r="3" /></svg>
@@ -173,7 +177,7 @@ onBeforeUnmount(() => {
               <Transition name="access" mode="out-in" @before-leave="element => element.inert = true" @after-enter="nextTick(() => nameInput?.focus({ preventScroll: true }))">
                 <form :key="registering ? 'register' : 'login'" class="access-form" @submit.prevent="submit">
                   <h2>{{ registering ? '给好奇心，一个起点。' : '你好，今天想问什么？' }}</h2>
-                  <p class="access-description">{{ registering ? '创建账号，开始自己的校园问学。' : route.query.changed ? '密码已更新，请使用新密码登录。' : '登录饭饭，继续你的校园探索。' }}</p>
+                  <p class="access-description">{{ registering ? '创建账号，开始自己的校园问学。' : route.query.changed ? '密码已更新，请使用新密码登录。' : '登录师小大，继续你的校园探索。' }}</p>
                   <div class="access-fields">
                     <label class="entry-field"><span>用户名</span><input ref="nameInput" v-model="username" name="username" autocomplete="username" placeholder="你的用户名" minlength="3" maxlength="32" required :disabled="submitting" :aria-invalid="invalidField === 'username'" aria-describedby="access-feedback" /></label>
                     <label class="entry-field"><span>密码</span><span class="password-control"><input ref="passwordInput" v-model="password" name="password" :aria-invalid="invalidField === 'password'" :type="showPassword ? 'text' : 'password'" :autocomplete="registering ? 'new-password' : 'current-password'" placeholder="至少 8 个字符" minlength="8" maxlength="128" required :disabled="submitting" aria-describedby="access-feedback" /><button type="button" :aria-label="showPassword ? '隐藏密码' : '显示密码'" :aria-pressed="showPassword" @click="showPassword = !showPassword">{{ showPassword ? '隐藏' : '显示' }}</button></span></label>
@@ -194,7 +198,7 @@ onBeforeUnmount(() => {
         <div class="chapter-heading" data-reveal><h2 id="conversation-title">问题很日常。<br /><span>回答，可以更有来路。</span></h2><p>从校园资料中寻找线索，用自然语言继续追问。<br />深度思考、工具轨迹与多轮对话，都在问学里。</p></div>
         <div class="conversation-scene" data-reveal>
           <div class="question-selector" role="group" aria-label="选择演示问题"><span class="demo-label">交互示例 · 非实时回答</span><button v-for="(item, index) in examples" :key="item.question" type="button" :aria-pressed="example === index" @click="example = index; sourceOpen = false"><span>{{ item.question }}</span><Icon name="arrowRight" :size="17" /></button></div>
-          <div class="answer-preview" aria-live="polite"><span class="preview-product">饭饭 <span>问学</span></span><Transition name="example" mode="out-in"><div :key="example"><p class="preview-question">{{ current.question }}</p><p class="thinking-line"><Icon name="sparkle" :size="14" /> 查询可访问的文档，再组织回答</p><p class="preview-answer">{{ current.answer }} <button type="button" class="citation-mark" aria-label="查看示例引用" :aria-expanded="sourceOpen" @click="sourceOpen = !sourceOpen">[1]</button></p><div v-if="sourceOpen" class="inline-source"><strong>产品功能说明（示例文档）</strong><p>{{ current.excerpt }}</p></div></div></Transition><span class="preview-rule"></span><p class="preview-caption">对话不止于一句回答，也可以沿着线索继续。</p></div>
+          <div class="answer-preview" aria-live="polite"><span class="preview-product">师小大 <span>问学</span></span><Transition name="example" mode="out-in"><div :key="example"><p class="preview-question">{{ current.question }}</p><p class="thinking-line"><Icon name="sparkle" :size="14" /> 查询可访问的文档，再组织回答</p><p class="preview-answer">{{ current.answer }} <button type="button" class="citation-mark" aria-label="查看示例引用" :aria-expanded="sourceOpen" @click="sourceOpen = !sourceOpen">[1]</button></p><div v-if="sourceOpen" class="inline-source"><strong>产品功能说明（示例文档）</strong><p>{{ current.excerpt }}</p></div></div></Transition><span class="preview-rule"></span><p class="preview-caption">对话不止于一句回答，也可以沿着线索继续。</p></div>
         </div>
       </section>
 
@@ -208,9 +212,9 @@ onBeforeUnmount(() => {
         <div class="constellation-bottom"><span>星链记录文档顺序 · 语义连线呈现内容关联</span><span>从问学出发，在星野相遇。</span></div>
       </section>
 
-      <section class="entry-closing chapter" data-reveal><span class="closing-word" aria-hidden="true">问</span><div><h2>下一问，<br />从你开始。</h2><p>把日常的好奇，带进自己的校园知识空间。</p><RouterLink v-if="auth.user" to="/inquiry" class="closing-action">进入问学 <Icon name="arrowRight" :size="22" /></RouterLink><button v-else type="button" class="closing-action" @click="focusForm">{{ registering ? '创建你的账号' : '登录饭饭' }} <Icon name="arrowRight" :size="22" /></button></div></section>
+      <section class="entry-closing chapter" data-reveal><span class="closing-word" aria-hidden="true">问</span><div><h2>下一问，<br />从你开始。</h2><p>把日常的好奇，带进自己的校园知识空间。</p><RouterLink v-if="auth.user" to="/inquiry" class="closing-action">进入问学 <Icon name="arrowRight" :size="22" /></RouterLink><button v-else type="button" class="closing-action" @click="focusForm">{{ registering ? '创建你的账号' : '登录师小大' }} <Icon name="arrowRight" :size="22" /></button></div></section>
     </main>
-    <footer class="entry-footer"><span>饭饭 <span>校园智能体</span></span><span>问学 · 典藏 · 记忆 · 星野</span><a href="#entry-start">回到开始 <Icon name="chevronUp" :size="14" /></a></footer>
+    <footer class="entry-footer"><span>师小大 <span>校园智能体</span></span><span>问学 · 典藏 · 记忆 · 星野</span><a href="#entry-start">回到开始 <Icon name="chevronUp" :size="14" /></a></footer>
   </div>
 </template>
 

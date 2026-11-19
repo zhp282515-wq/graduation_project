@@ -252,7 +252,6 @@ onBeforeUnmount(() => {
         </button>
         <img class="head-seal" :src="sealUrl" alt="江西师范大学校徽" width="72" height="60" />
         <div class="head-main">
-          <p class="eyebrow">问学 <span class="slash">/</span> INQUIRY</p>
           <h1 class="head-title">{{ title }}</h1>
         </div>
       </div>
@@ -342,11 +341,6 @@ onBeforeUnmount(() => {
           @stop="handleStop"
           @update:reasoning="reasoning = $event"
         />
-        <p class="dock-note mono">
-          Agent 会调用真实工具检索知识库；出处可点开核对原文
-          <span class="dot-sep">·</span>
-          会话与记忆保存在本地服务
-        </p>
       </div>
     </div>
 
@@ -369,9 +363,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  /* 走栏 92 + 栏间 26：对话列与书写台共用同一组中线参数。 */
-  --thread-gutter: 92px;
-  --thread-gap: 26px;
 }
 
 /* 抬头直接挂在 .inquiry 下，不像其他页面有 .view-inner 包裹，这里补回同样的安全边距。 */
@@ -408,7 +399,7 @@ onBeforeUnmount(() => {
 }
 
 .head-title {
-  margin: 2px 0 0;
+  margin: 0;
   font-family: var(--font-serif);
   font-size: 17px;
   font-weight: 500;
@@ -434,8 +425,7 @@ onBeforeUnmount(() => {
 }
 
 .thread-inner {
-  /* 左侧是 92px 走栏 + 26px 间距，右侧留同样宽度，阅读列才真正落在页面中线上。 */
-  max-width: calc(var(--reading-w) + (var(--thread-gutter) + var(--thread-gap)) * 2);
+  max-width: var(--reading-w);
   margin: 0 auto;
 }
 
@@ -859,21 +849,8 @@ onBeforeUnmount(() => {
 }
 
 .dock-inner {
-  /* 与 .turn-col 同宽同轴：宽度 = --reading-w，水平居中。 */
   max-width: var(--reading-w);
   margin: 0 auto;
-}
-
-.dock-note {
-  margin: 9px 0 0;
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--ink-4);
-}
-
-.dot-sep {
-  margin: 0 6px;
 }
 
 @media (max-width: 1080px) {
@@ -883,10 +860,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1180px) {
-  .thread-inner {
-    max-width: var(--reading-w);
-  }
-
   .campus-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -978,10 +951,6 @@ onBeforeUnmount(() => {
 
   .dock {
     padding: 4px 12px 12px;
-  }
-
-  .dock-note {
-    display: none;
   }
 
   .head-title {
