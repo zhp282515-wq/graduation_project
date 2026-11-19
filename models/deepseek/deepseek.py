@@ -4,6 +4,7 @@ import time
 from typing import Any, Iterator
 
 import httpx
+from session.usage import error_usage, metered_invoke, metered_stream, observed
 from dotenv import load_dotenv
 
 from models.base import BaseProvider, ChatMessage, ChatResponse, ToolCall, parse_tool_arguments
@@ -82,6 +83,7 @@ def _parse_json(raw: str) -> dict[str, Any]:
         raise RuntimeError(f"DeepSeek 响应无法解析为 JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise RuntimeError("DeepSeek 响应结构异常：数据不是 JSON 对象")
+    observed(data.get("usage"))
     error = data.get("error")
     if error:
         detail = error.get("message", str(error)) if isinstance(error, dict) else str(error)
@@ -138,6 +140,7 @@ class DeepSeekProvider(BaseProvider):
             payload["tools"] = tools
         return payload
 
+    @metered_invoke
     def invoke(
         self,
         messages: list[ChatMessage],
@@ -159,6 +162,7 @@ class DeepSeekProvider(BaseProvider):
         )
         logger.info("[响应] DeepSeek HTTP %s, 耗时 %s", response.status_code, fmt_duration(time.perf_counter() - start))
         if response.status_code != 200:
+            observed(error_usage(response.text))
             raise RuntimeError(f"DeepSeek 返回 {response.status_code}: {response.text[:300]}")
 
         data = _parse_json(response.text)
@@ -179,6 +183,7 @@ class DeepSeekProvider(BaseProvider):
             token_usage=data.get("usage"),
         )
 
+    @metered_stream
     def stream(
         self,
         messages: list[ChatMessage],
@@ -207,6 +212,7 @@ class DeepSeekProvider(BaseProvider):
         ) as response:
             if response.status_code != 200:
                 body = response.read().decode("utf-8", errors="replace")
+                observed(error_usage(body))
                 raise RuntimeError(f"DeepSeek 返回 {response.status_code}: {body[:300]}")
 
             for raw in _iter_sse_data(response):

@@ -9,6 +9,7 @@ import time
 from typing import Any, Sequence
 
 import httpx
+from session.usage import auxiliary, error_usage
 from dotenv import load_dotenv
 
 from utils.logger_tool import logger
@@ -78,6 +79,8 @@ class DashScopeReranker:
         logger.info("[重排响应] %s, 耗时 %.2fs", resp.status_code, time.perf_counter() - started)
 
         if resp.status_code != 200:
+            if usage := error_usage(resp.text):
+                auxiliary(self.model, usage, [query, documents])
             logger.error("[重排错误] HTTP %s: %s", resp.status_code, resp.text[:300])
             raise RuntimeError(f"重排服务返回 {resp.status_code}: {resp.text[:300]}")
 
@@ -87,10 +90,15 @@ class DashScopeReranker:
             logger.error("[重排解析] 响应不是合法 JSON：%s", exc)
             raise RuntimeError(f"重排响应无法解析为 JSON：{exc}") from exc
 
+        if data.get("usage"):
+            auxiliary(self.model, data.get("usage"), [query, documents])
         results = (data.get("output") or {}).get("results")
         if not isinstance(results, list):
             logger.error("[重排解析] 响应缺少 output.results: %s", str(data)[:300])
             raise RuntimeError("重排响应结构异常：缺少 output.results")
+
+        if not data.get("usage"):
+            auxiliary(self.model, None, [query, documents])
 
         return [
             {"index": item.get("index"), "score": item.get("relevance_score")}

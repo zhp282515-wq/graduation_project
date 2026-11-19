@@ -98,6 +98,8 @@
   --star-b: #527b68;
   --star-c: #a47a3d;
 
+  --usage-user: #aa6034;
+  --usage-admin: #50798f;
   color-scheme: light;
 }
 
@@ -140,6 +142,8 @@
   --star-b: #6fa8b0;
   --star-c: #d3a24e;
 
+  --usage-user: #d99b70;
+  --usage-admin: #83adc0;
   color-scheme: dark;
 }
 

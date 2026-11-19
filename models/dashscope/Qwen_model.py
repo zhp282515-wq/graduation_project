@@ -4,6 +4,7 @@ from models.base import BaseProvider, ChatMessage, parse_tool_arguments
 from models.base import ChatResponse
 import json
 import httpx
+from session.usage import error_usage, metered_invoke, metered_stream, observed
 from models.base import ToolCall
 from utils.logger_tool import logger
 import time
@@ -65,6 +66,7 @@ class DashScopeProvider(BaseProvider):
     def reasoning_kwargs(self, value: Any = None) -> dict[str, Any]:
         return {"enable_thinking": False if value is None else bool(value)}
 
+    @metered_invoke
     def invoke(
         self,
         messages: list[ChatMessage],
@@ -102,6 +104,7 @@ class DashScopeProvider(BaseProvider):
         logger.info(f"[响应] {resp.status_code}, 耗时 {elapsed:.2f}s")
 
         if resp.status_code != 200:
+            observed(error_usage(resp.text))
             logger.error(
                 f"[错误] HTTP {resp.status_code}: {resp.text[:300]}"
             )
@@ -125,6 +128,7 @@ class DashScopeProvider(BaseProvider):
 
         try:
             data = resp.json()
+            observed(data.get("usage"))
         except Exception as e:
             logger.error(f"[解析] 响应不是合法 JSON: {e} | 原文: {resp.text[:300]}")
             raise RuntimeError(f"DashScope 响应无法解析为 JSON: {e}") from e
@@ -169,6 +173,7 @@ class DashScopeProvider(BaseProvider):
             token_usage=token,
         )
 
+    @metered_stream
     def stream(
         self,
         messages: list[ChatMessage],
@@ -216,6 +221,7 @@ class DashScopeProvider(BaseProvider):
             if resp.status_code != 200:
                 # Read the streaming response before accessing .text.
                 body = resp.read().decode("utf-8", errors="replace")
+                observed(error_usage(body))
                 logger.error(f"[流式错误] HTTP {resp.status_code}: {body[:300]}")
                 raise RuntimeError(f"DashScope 返回 {resp.status_code}: {body[:300]}")
 
@@ -237,6 +243,7 @@ class DashScopeProvider(BaseProvider):
 
                 if not isinstance(chunk, dict):
                     raise RuntimeError("DashScope 流式响应结构异常：数据块不是 JSON 对象")
+                observed(chunk.get("usage"))
                 error = chunk.get("error")
                 if error:
                     detail = error.get("message", str(error)) if isinstance(error, dict) else str(error)

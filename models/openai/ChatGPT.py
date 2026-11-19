@@ -4,6 +4,7 @@ import time
 
 from models.base import BaseProvider, ChatMessage, ChatResponse, ToolCall, parse_tool_arguments
 import httpx
+from session.usage import error_usage, metered_invoke, metered_stream, observed
 from utils.logger_tool import logger
 import os
 from dotenv import load_dotenv
@@ -115,6 +116,7 @@ class OpenAIProvider(BaseProvider):
             value = "high"
         return {"reasoning_effort": str(value)}
 
+    @metered_invoke
     def invoke(
         self,
         messages: list[ChatMessage],
@@ -150,11 +152,13 @@ class OpenAIProvider(BaseProvider):
         logger.info(f"[响应] {resp.status_code}, 耗时 {elapsed:.2f}s")
 
         if resp.status_code != 200:
+            observed(error_usage(resp.text))
             logger.error(f"[错误] HTTP {resp.status_code}: {resp.text[:300]}")
             raise RuntimeError(f"OpenAI Responses API 返回 {resp.status_code}: {resp.text[:300]}")
 
         try:
             data = resp.json()
+            observed(data.get("usage"))
         except Exception as e:
             logger.error(f"[解析] 响应不是合法 JSON: {e} | 原文: {resp.text[:300]}")
             raise RuntimeError(f"OpenAI Responses API 响应无法解析为 JSON: {e}") from e
@@ -204,6 +208,7 @@ class OpenAIProvider(BaseProvider):
             token_usage=data.get("usage"),
         )
 
+    @metered_stream
     def stream(
         self,
         messages: list[ChatMessage],
@@ -367,6 +372,8 @@ class OpenAIProvider(BaseProvider):
 
             if event_type == "response.failed":
                 failed_response = event.get("response") or {}
+                if isinstance(failed_response, dict):
+                    observed(failed_response.get("usage"))
                 error = failed_response.get("error") if isinstance(failed_response, dict) else None
                 detail = error.get("message", str(error)) if isinstance(error, dict) else str(error or event)
                 raise RuntimeError(f"OpenAI Responses API 生成失败: {detail}")
@@ -416,6 +423,7 @@ class OpenAIProvider(BaseProvider):
                     "incomplete" if event_type == "response.incomplete" else "completed"
                 )
                 usage = response_data.get("usage")
+                observed(usage)
                 if isinstance(usage, dict):
                     token_usage = usage
 
@@ -438,6 +446,7 @@ class OpenAIProvider(BaseProvider):
         ) as response:
             if response.status_code != 200:
                 body = response.read().decode("utf-8", errors="replace")
+                observed(error_usage(body))
                 logger.error("[流式错误] HTTP %s: %s", response.status_code, body[:300])
                 raise RuntimeError(
                     f"OpenAI Responses API 返回 {response.status_code}: {body[:300]}"

@@ -56,6 +56,7 @@ class ApiTests(unittest.TestCase):
         self.stack.enter_context(patch.object(main, "MemoryExtractor"))
         self.stack.enter_context(patch.object(main, "MemoryJobs", return_value=self.jobs))
         self.stack.enter_context(patch.dict("os.environ", {"LANGGRAPH_POSTGRES_URI": "mock://tests", "AUTH_JWT_SECRET": "x"*48}))
+        self.stack.enter_context(patch.object(main, "setup_usage"))
         self.stack.enter_context(patch.object(main, "UserRepository"))
         self.stack.enter_context(patch.object(main, "ModelSettingsRepository"))
         self.chat_model_resolver = self.stack.enter_context(patch.object(main, "_resolve_chat_model", return_value=(Mock(), {"images": True, "reasoning": True})))

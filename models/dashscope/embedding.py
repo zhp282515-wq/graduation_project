@@ -10,6 +10,7 @@ import time
 from typing import Any, Sequence
 
 import httpx
+from session.usage import auxiliary, error_usage
 from dotenv import load_dotenv
 
 from utils.logger_tool import logger
@@ -86,6 +87,8 @@ class DashScopeEmbedding:
         logger.info("[嵌入响应] %s, 耗时 %.2fs", resp.status_code, elapsed)
 
         if resp.status_code != 200:
+            if usage := error_usage(resp.text):
+                auxiliary(self.model, usage, texts)
             logger.error("[嵌入错误] HTTP %s: %s", resp.status_code, resp.text[:300])
             raise RuntimeError(f"嵌入服务返回 {resp.status_code}: {resp.text[:300]}")
 
@@ -95,6 +98,8 @@ class DashScopeEmbedding:
             logger.error("[嵌入解析] 响应不是合法 JSON：%s", exc)
             raise RuntimeError(f"嵌入响应无法解析为 JSON：{exc}") from exc
 
+        if data.get("usage"):
+            auxiliary(self.model, data.get("usage"), texts)
         embeddings = (data.get("output") or {}).get("embeddings")
         if not isinstance(embeddings, list) or not embeddings:
             logger.error(
@@ -102,6 +107,9 @@ class DashScopeEmbedding:
                 json.dumps(data, ensure_ascii=False)[:300],
             )
             raise RuntimeError("嵌入响应结构异常：缺少 output.embeddings")
+
+        if not data.get("usage"):
+            auxiliary(self.model, None, texts)
 
         # 按 index 排序，保证顺序与输入严格对应。
         ordered = sorted(embeddings, key=lambda item: item.get("index", 0))

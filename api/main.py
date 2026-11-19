@@ -57,6 +57,8 @@ from utils.prompts_loader import get_prompt
 
 from utils.query_tool import build_query
 from utils.conversation import saved_history
+from api.usage import Reports, router as usage_router
+from session.usage import Attribution, UsageWriter, setup as setup_usage
 
 # ---------- 图片上传 ----------
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "uploads"
@@ -161,6 +163,14 @@ async def lifespan(app: FastAPI):
             app.state.knowledge = None
             app.state.kb_error = f"{type(exc).__name__}: {exc}"
 
+        app.state.usage_reports = Reports(pg_pool)
+        app.state.usage_writer = UsageWriter(pg_pool)
+        resources.callback(app.state.usage_writer.close)
+        try:
+            with pg_pool.connection() as conn:
+                setup_usage(conn)
+        except Exception:
+            logger.exception("Token 统计初始化失败")
         app.state.runs = KeyedLocks()
         app.state.pg_pool = pg_pool
         # 知识星图：知识库的真实分片只读视图，构建在首次访问时触发并落盘缓存。
@@ -244,6 +254,15 @@ def update_model_settings(body: ModelSettingsUpdate, request: Request, user: dic
 
 
 app.include_router(auth_router)
+app.include_router(usage_router)
+
+
+def attribution(request, user, session_id=None):
+    excluded = os.getenv("TOKEN_USAGE_EXCLUDED_USER_IDS", "").split(",")
+    writer = getattr(request.app.state, "usage_writer", None)
+    if user["id"] in {value.strip() for value in excluded}:
+        writer = None
+    return Attribution(writer, user["id"], user["role"], session_id)
 
 @app.get("/api/sessions")
 async def list_sessions(
@@ -319,6 +338,8 @@ async def chat(
 
     resources = ExitStack()
 
+    actor = attribution(request, user, req.session_id)
+
     def prepare_run():
         conn = resources.enter_context(request.app.state.pg_pool.connection())
         for image in abs_images:
@@ -328,7 +349,7 @@ async def chat(
             PostgresSessionRepository(conn), request.app.state.runtime,
             runs=request.app.state.runs,
             on_complete=lambda uid, text, answer: background.add_task(
-                request.app.state.memory_jobs.run, uid, text, answer,
+                actor.run, request.app.state.memory_jobs.run, uid, text, answer,
             ),
             history_builder=saved_history,
             model_resolver=lambda: _resolve_chat_model(conn),
@@ -365,12 +386,12 @@ async def chat(
         resources.close()
         raise
 
-    return chat_response(stream, resources, background)
+    return chat_response(stream, resources, background, actor)
 
 
-def chat_response(stream, resources: ExitStack, background: BackgroundTasks):
+def chat_response(stream, resources: ExitStack, background: BackgroundTasks, actor: Attribution):
     def sse():
-        for event in stream:
+        while (event := actor.run(next, stream, None)) is not None:
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
     return ChatStreamingResponse(sse(), run=stream, cleanup=resources.close,
                                  background=background, media_type="text/event-stream")
@@ -401,7 +422,7 @@ async def regenerate_message(
     except BaseException:
         resources.close()
         raise
-    return chat_response(stream, resources, background)
+    return chat_response(stream, resources, background, attribution(request, user, session_id))
 
 
 
@@ -856,7 +877,7 @@ def search_knowledge(body: SearchRequest, request: Request,
     with request.app.state.pg_pool.connection() as conn:
         allowed = allowed_documents(conn,user)
     if allowed:
-        result = service.debug_retriever(query, body.mode, body.top_k, body.top_n,
+        result = attribution(request, user).run(service.debug_retriever, query, body.mode, body.top_k, body.top_n,
                                          expression='file_md5 in '+json.dumps(sorted(allowed)))
     else:
         result = {
@@ -1066,7 +1087,7 @@ async def upload_knowledge_document(
         tmp_path.unlink(missing_ok=True)
         raise
     background.add_task(
-        run_ingest_job,
+        attribution(request, user).run, run_ingest_job,
         request.app.state.pg_pool,
         service,
         file_md5,

@@ -17,6 +17,10 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from api import main
+from api.usage import Reports
+from session.usage import setup as setup_usage, insert_event
+from scripts.backfill_token_usage import backfill
+from datetime import datetime, timezone
 from auth.bootstrap import bootstrap
 from auth.policy import ScopedKnowledge, allowed_documents, principal
 from auth.repository import UserRepository
@@ -49,6 +53,7 @@ class AuthIntegrationTests(unittest.TestCase):
             UserRepository(conn).setup()
             PostgresSessionRepository(conn).setup()
             KbDocumentRepository(conn).setup()
+            setup_usage(conn)
 
     @classmethod
     def tearDownClass(cls):
@@ -92,6 +97,72 @@ class AuthIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         client.headers['x-csrf-token']=response.json()['csrf_token']
         return response
+
+    def test_usage_backfill_replays_only_reliable_rows(self):
+        with self.pool.connection() as conn:
+            conn.execute('TRUNCATE token_usage_confirmed_daily, token_usage_calls')
+            repo = PostgresSessionRepository(conn)
+            for total in (10, 17):
+                repo.add_message(self.session.id, "assistant", "fixture",
+                                 token_usage={"prompt_tokens":8, "completion_tokens":2, "total_tokens":total})
+            conn.execute("UPDATE token_usage_install SET started_at=now()")
+            self.assertEqual(backfill(conn), 1)
+            self.assertEqual(backfill(conn), 0)
+            repo.add_message(self.session.id, "assistant", "later",
+                             token_usage={"prompt_tokens":8, "completion_tokens":2, "total_tokens":10})
+            self.assertEqual(backfill(conn), 0)
+            self.assertEqual(conn.execute("SELECT sum(calls) AS n FROM token_usage_confirmed_daily").fetchone()["n"],1)
+
+    def test_usage_only_confirmed_tokens_enter_all_reports(self):
+        from datetime import timedelta
+        from api.usage import SHANGHAI
+        now = datetime.now(SHANGHAI)
+        yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        with self.pool.connection() as conn:
+            conn.execute('TRUNCATE token_usage_confirmed_daily, token_usage_calls')
+            for prefix, amount, is_estimate, when in (
+                ('unsplit', 31, False, now), ('unconfirmed', 400, True, now),
+                ('previous', 5, False, yesterday), ('previous-estimate', 800, True, yesterday),
+            ):
+                insert_event(conn, (prefix, self.admin['id'], 'admin', None, 'test',
+                             amount if is_estimate else None, 0 if is_estimate else None,
+                             amount, 'chat', is_estimate, when))
+        main.app.state.usage_reports = Reports(self.pool)
+        self.login('administrator')
+        path = '/api/admin/usage/'
+        card = self.client.get(path+'overview').json()['items'][0]
+        self.assertEqual((card['total'], card['input'], card['output'], card['unclassified'],
+                          card['previous'], card['calls']), (31,0,0,31,5,1))
+        self.assertEqual(self.client.get(path+'trend').json()['items'][-1]['total'],31)
+        self.assertEqual(self.client.get(path+'ranking').json()['items'][0]['total'],31)
+
+    def test_usage_admin_only_deleted_accounts_and_role_snapshot(self):
+        self.login('alice')
+        paths = ['/api/admin/usage/' + name for name in ('overview','trend','ranking')]
+        for path in paths:
+            self.assertEqual(self.client.get(path).status_code, 403)
+        main.app.state.usage_reports = Reports(self.pool)
+        self.login('administrator')
+        with self.pool.connection() as conn:
+            conn.execute('TRUNCATE token_usage_confirmed_daily, token_usage_calls')
+            for who in (self.alice,self.admin):
+                event = (who['id'],who['id'],who['role'],None,'test',3,7,10,'chat',False,datetime.now(timezone.utc))
+                self.assertEqual(insert_event(conn,event),1)
+                self.assertEqual(insert_event(conn,event),0)
+        cards = self.client.get(paths[0]).json()['items']
+        self.assertTrue(all(c['total']==20 and c['active']==2 for c in cards))
+        self.assertNotIn('alice',self.client.get(paths[2]).text)
+        for operation in ('disable','delete'):
+            with self.pool.connection() as conn, conn.transaction():
+                repo = UserRepository(conn)
+                if operation == 'disable':
+                    repo.update(self.alice['id'], enabled=False)
+                else:
+                    repo.delete(self.alice['id'])
+            main.app.state.usage_reports = Reports(self.pool)
+            self.assertIn('已注销用户',self.client.get(paths[2]).text)
+            self.assertEqual(self.client.get(paths[0]).json()['items'][0]['total'],20)
+        self.assertEqual(self.client.get(paths[1]+'?role=admin').json()['items'][-1]['total'],10)
 
     def test_register_uses_argon2_cookie_and_never_accepts_role(self):
         response=self.client.post('/api/auth/register',json={'username':'new_user','password':PASSWORD,'role':'admin'})

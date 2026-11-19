@@ -1,3 +1,4 @@
+import { h } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -12,6 +13,8 @@ const routes = [
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { mode: 'settings', title: '设置' } },
   { path: '/password', name: 'password', component: () => import('../views/SettingsView.vue'), meta: { mode: 'settings', title: '修改密码' } },
   { path: '/settings/model', name: 'model-settings', component: () => import('../views/SettingsView.vue'), meta: { mode: 'settings', title: '模型配置', admin: true } },
+  { path: '/forbidden', component: { render: () => h('p', { role: 'alert', class: 'view-head' }, '403 · 此页面仅管理员可访问') } },
+  { path: '/admin/usage', name: 'admin-usage', component: () => import('../views/AdminUsageView.vue'), meta: { mode: 'usage', title: 'Token 用量', admin: true } },
   { path: '/admin/users', component: () => import('../views/AdminUsersView.vue'), meta: { mode: 'users', title: '账号管理', admin: true } },
   { path: '/admin/search', component: () => import('../views/AdminSearchView.vue'), meta: { mode: 'search', title: '知识检索', admin: true } },
   {
@@ -62,6 +65,7 @@ router.beforeEach(async (to) => {
   try { await auth.restore() } catch { return to.meta.public ? true : { path: '/login', query: { redirect: to.fullPath } } }
   if (!to.meta.public && !auth.user) return { path: '/login', query: { redirect: to.fullPath } }
   if (auth.user?.must_change_password && to.path !== '/password') return '/password'
+  if (to.name === 'admin-usage' && !auth.isAdmin) return '/forbidden'
   if (to.meta.admin && !auth.isAdmin) return '/inquiry'
   if (auth.user && ['/login', '/register'].includes(to.path)) return '/inquiry'
 })
