@@ -83,7 +83,7 @@ onBeforeUnmount(() => controller?.abort())
     <ul v-else class="entries">
       <li v-for="row in rows" :key="row.id">
         <time :datetime="row.occurred_at">{{ timestamp.format(new Date(row.occurred_at)) }}</time>
-        <span class="indicator" :class="{warning: ['WARNING','ERROR','CRITICAL'].includes(row.level) || row.outcome==='失败'}">{{ row.level || row.outcome }}</span>
+        <span class="indicator" :data-level="row.level" :class="{warning: row.outcome==='失败'}">{{ row.level || row.outcome }}</span>
         <div class="event">
           <strong>{{ row.event }}</strong>
           <span v-if="category==='runtime'">{{ row.source }}<template v-if="row.purpose"> · {{ row.purpose }}</template><template v-if="row.model"> · {{ row.model }}</template><template v-if="!row.actor_kind && ['DeepSeek','OpenAI','通义千问','向量化','重排'].includes(row.source)"> · 用途及模型未记录</template></span>
@@ -123,6 +123,13 @@ code {overflow-wrap:anywhere; user-select:all; min-width:0}
 @media(hover:none) { .actor .copy-id {opacity:1; pointer-events:auto} }
 .indicator {font:12px var(--font-mono); color:var(--ink-2)}
 .warning {color:var(--usage-user)}
+.indicator[data-level] {display:inline-flex; align-items:center; gap:5px}
+.indicator[data-level]::before {content:''; width:6px; height:6px; flex:none; border-radius:50%; background:currentColor}
+.indicator[data-level="DEBUG"] {color:var(--ink-3)}
+.indicator[data-level="INFO"] {color:var(--log-info)}
+.indicator[data-level="WARNING"] {color:var(--warn)}
+.indicator[data-level="ERROR"] {color:var(--err)}
+.indicator[data-level="CRITICAL"] {color:var(--log-critical); font-weight:700}
 footer {justify-content:flex-end; margin-top:16px}
 @media(max-width:700px) {
   .entries li {grid-template-columns:1fr auto; gap:5px}

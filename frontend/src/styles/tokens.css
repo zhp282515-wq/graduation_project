@@ -79,6 +79,8 @@
   --ok: #3d6249;
   --ok-soft: rgba(61, 98, 73, 0.1);
   --warn: #80602a;
+  --log-info: #245f92;
+  --log-critical: #753385;
   --warn-soft: rgba(128, 96, 42, 0.1);
   --err: #8f2b22;
   --err-soft: rgba(143, 43, 34, 0.09);
@@ -126,6 +128,8 @@
   --ok: #7fb894;
   --ok-soft: rgba(127, 184, 148, 0.12);
   --warn: #d8b36a;
+  --log-info: #86b9ed;
+  --log-critical: #e0a0eb;
   --warn-soft: rgba(216, 179, 106, 0.12);
   --err: #e67a63;
   --err-soft: rgba(230, 122, 99, 0.12);
