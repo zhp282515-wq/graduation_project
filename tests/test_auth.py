@@ -176,6 +176,85 @@ class AuthIntegrationTests(unittest.TestCase):
             self.assertEqual({(r["actor_id"],r["actor_kind"],r["purpose"],r["model"]) for r in rows},
                              {(actor.user_id,"user",purpose,model)})
 
+    def test_activity_records_saved_questions_and_actual_tool_executions(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from agent.tools.executor import execute_tool
+        from api.activity import setup_activity
+        from models.base import ToolCall
+        from session.usage import Attribution, UsageWriter, record_question
+        from tests.test_sessions import DONE
+
+        url = "/api/admin/usage/activity"
+        self.login("alice")
+        self.assertEqual(self.client.get(url).status_code, 403)
+        writer = UsageWriter(self.pool)
+        self.addCleanup(writer.close)
+        actor = Attribution(writer, self.alice["id"], "user", self.session.id)
+        with self.pool.connection() as conn:
+            setup_activity(conn)
+            conn.execute("TRUNCATE usage_activity_events")
+            conn.execute("UPDATE usage_activity_install SET started_at=now()")
+        runtime = main.app.state.runtime
+        runtime.stream.side_effect = [iter([DONE]), iter([DONE]), iter([{"type":"run_failed"}])]
+        with patch.object(main.app.state,"usage_writer",writer,create=True), patch.object(
+                main.app.state,"memory_jobs",Mock(),create=True), patch.object(
+                main,"_resolve_chat_model",return_value=(Mock(), {"images":True,"reasoning":True})):
+            body = {"session_id":self.session.id,"text":"问题"}
+            self.assertIn('"type": "done"',self.client.post("/api/chat",json=body).text)
+            with self.pool.connection() as conn:
+                saved = conn.execute("SELECT id FROM messages WHERE role='assistant'").fetchone()
+            path = f"/api/sessions/{self.session.id}/messages/{saved['id']}/regenerate"
+            self.assertIn('"type": "done"',self.client.post(path).text)
+            self.assertIn('"type": "run_failed"',self.client.post("/api/chat",json=body).text)
+        with self.pool.connection() as conn:
+            repo = PostgresSessionRepository(conn)
+            photo = actor.run(repo.add_message,self.session.id,"user","",images=["fixture.png"])
+            actor.run(record_question, conn, {"id":photo.id, "created_at":photo.created_at})
+            repo.delete_session(self.alice["id"],self.session.id)
+        tool = SimpleNamespace(name="weather",parameters={"properties":{"city":{"type":"string"}},"required":["city"]},
+                               run=Mock(side_effect=RuntimeError("fixture")))
+        registry = Mock()
+        registry.get.side_effect = lambda name: tool if name == tool.name else None
+        def attempt(name, arguments):
+            return actor.run(execute_tool, registry, ToolCall(id="same",name=name,arguments=arguments))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            tasks = [pool.submit(attempt,"weather",{"city":"A"}) for _ in range(2)]
+            for task in tasks:
+                self.assertEqual(task.result().status,"error")
+        attempt("weather",{})
+        attempt("unknown",{})
+        writer.worker.submit(lambda:None).result()
+        self.login("administrator")
+        main.app.state.usage_reports = Reports(self.pool)
+        report = self.client.get(url).json()
+        self.assertEqual(len(report["items"]),30)
+        self.assertIsNone(report["items"][-2]["tools"])
+        self.assertEqual(report["items"][-1]["messages"],3)
+        self.assertEqual(report["items"][-1]["tools"],{"weather":2})
+        admin = self.client.get(url,params={"role":"admin"}).json()["items"][-1]
+        self.assertEqual((admin["messages"],admin["tools"]),(0,{}))
+
+    def test_activity_cache_rolls_over_at_shanghai_midnight(self):
+        from datetime import timedelta
+        from api.activity import ActivityReports, SHANGHAI, setup_activity
+        midnight = datetime(2026,10,1,tzinfo=SHANGHAI)
+        with self.pool.connection() as conn:
+            setup_activity(conn)
+            conn.execute("TRUNCATE usage_activity_events")
+            conn.execute("UPDATE usage_activity_install SET started_at=%s",(midnight-timedelta(days=5),))
+            for offset in (-1,0):
+                conn.execute("INSERT INTO usage_activity_events VALUES (%s,%s,'admin',NULL)",
+                             (str(offset),midnight+timedelta(seconds=offset)))
+        reports = ActivityReports(self.pool)
+        with patch("api.activity.datetime",wraps=datetime) as clock:
+            clock.now.return_value = midnight - timedelta(seconds=1)
+            yesterday = reports.get("all")["items"]
+            clock.now.return_value = midnight
+            today = reports.get("all")["items"]
+        self.assertEqual(yesterday[-1]["date"],"2026-09-30")
+        self.assertEqual(today[-1]["date"],"2026-10-01")
+        self.assertEqual([d["messages"] for d in today[-7:]], [None,0,0,0,0,1,1])
+
     def test_usage_backfill_replays_only_reliable_rows(self):
         with self.pool.connection() as conn:
             conn.execute('TRUNCATE token_usage_confirmed_daily, token_usage_calls')

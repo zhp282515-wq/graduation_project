@@ -6,6 +6,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from api.activity import ActivityReports
 from auth.routes import require_admin
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -61,6 +62,7 @@ def summarize(rows, yesterday, now, role):
 class Reports:
     def __init__(self, pool):
         self.pool = pool
+        self.activity = ActivityReports(pool)
         self.lock = Lock()
         self.expires = 0
         self.date = None
@@ -95,6 +97,12 @@ def snapshot(request: Request, response: Response, role: Role = "all"):
 @router.get("/access", status_code=204)
 def access():
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/activity")
+def activity(request: Request, response: Response, role: Role = "all"):
+    response.headers["Cache-Control"] = "private, no-store"
+    return request.app.state.usage_reports.activity.get(role)
 
 
 @router.get("/overview")

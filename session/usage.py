@@ -23,6 +23,29 @@ def setup(conn):
     conn.execute(Path(__file__).with_name("usage_schema.sql").read_text(encoding="utf-8"))
 
 
+ACTIVITY_INSERT = """INSERT INTO usage_activity_events(event_id,occurred_at,role,tool_name)
+                     VALUES (%s,%s,%s,%s) ON CONFLICT(event_id) DO NOTHING"""
+
+
+def record_question(conn, row):
+    actor = _actor.get()
+    if actor is not None:
+        try:
+            with conn.transaction():
+                conn.execute(ACTIVITY_INSERT, (f"message:{row['id']}", row["created_at"], actor.role, None))
+        except Exception:
+            log.exception("消息次数写入失败")
+
+
+def record_tool(name):
+    actor = _actor.get()
+    if actor is not None:
+        try:
+            actor.writer.submit_tool((uuid4().hex, datetime.now(timezone.utc), actor.role, name))
+        except Exception:
+            log.exception("工具次数采集失败")
+
+
 def insert_event(conn, values):
     """The primary key makes replay and daily increments idempotent in one statement."""
     result = conn.execute("""
@@ -51,6 +74,16 @@ class UsageWriter:
 
     def submit(self, values):
         self.worker.submit(self._write, values)
+
+    def submit_tool(self, values):
+        self.worker.submit(self._write_tool, values)
+
+    def _write_tool(self, values):
+        try:
+            with self.pool.connection() as conn:
+                conn.execute(ACTIVITY_INSERT, values)
+        except Exception:
+            log.exception("工具次数写入失败")
 
     def _write(self, values):
         try:

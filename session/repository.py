@@ -5,6 +5,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from session.usage import record_question
 from session.models import Memory, Message, Note, Session
 
 _SCHEMA = """
@@ -253,7 +254,7 @@ class PostgresSessionRepository:
         tool_call_id: str | None = None,
         token_usage: dict[str, Any] | None = None,
     ) -> Message:
-        with self._conn.cursor(row_factory=dict_row) as cur:
+        with self._conn.transaction(), self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
                 INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, token_usage, images)
@@ -271,6 +272,8 @@ class PostgresSessionRepository:
                 ),
             )
             row = cur.fetchone()
+            if role == "user":
+                record_question(self._conn, row)
         self._conn.commit()
         return _to_message(row)
 

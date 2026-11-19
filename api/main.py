@@ -59,6 +59,7 @@ from utils.query_tool import build_query
 from utils.conversation import saved_history
 from api.admin_logs import AuditMiddleware, router as logs_router
 from session.admin_logs import start_logs
+from api.activity import setup_activity
 from api.usage import Reports, router as usage_router
 from session.usage import Attribution, UsageWriter, setup as setup_usage
 
@@ -178,6 +179,7 @@ async def lifespan(app: FastAPI):
         try:
             with pg_pool.connection() as conn:
                 setup_usage(conn)
+                setup_activity(conn)
         except Exception:
             logger.exception("Token 统计初始化失败")
         app.state.runs = KeyedLocks()
@@ -380,7 +382,7 @@ async def chat(
         )
 
     try:
-        stream = await run_in_threadpool(prepare_run)
+        stream = await run_in_threadpool(actor.run, prepare_run)
     except SessionBusyError as exc:
         resources.close()
         raise HTTPException(status_code=409, detail=str(exc)) from exc

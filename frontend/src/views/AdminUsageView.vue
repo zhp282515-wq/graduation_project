@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { request } from '../api/http'
+import UsageActivityChart from '../components/UsageActivityChart.vue'
 import Icon from '../components/ui/Icon.vue'
 
 const periods = [1, 7, 30]
@@ -11,7 +12,22 @@ const calendar = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', m
 const dayName = day => calendar.format(new Date(day.date + 'T12:00:00+08:00'))
 const role = ref('all'), period = ref(1), expanded = ref(false)
 const report = ref(null), loading = ref(true), error = ref(''), selected = ref(29)
-let timer, controller
+const activity = ref(null), activityError = ref('')
+let timer, controller, activityController
+async function refreshActivity() {
+  activityController?.abort()
+  const current = new AbortController()
+  activityController = current
+  activityError.value = ''
+  try {
+    const data = await request('/api/admin/usage/activity', {query:{role:role.value}, signal:current.signal})
+    if (activityController === current) activity.value = data
+  } catch (err) {
+    if (!current.signal.aborted) activityError.value = err.message || '活动统计读取失败'
+  }
+}
+function refreshAll() { refresh(); refreshActivity() }
+watch(role, () => { activity.value = null; refreshActivity() })
 const selectedDay = computed(() => report.value?.days[selected.value])
 const range = computed(() => {
   const recorded = (report.value?.days || []).map(day => day.total).filter(value => value > 0)
@@ -58,8 +74,8 @@ async function refresh() {
 }
 watch([role, period], () => { expanded.value = false; report.value = null; refresh() })
 function toggleAll() { expanded.value = !expanded.value; refresh() }
-onMounted(() => { refresh(); timer = setInterval(refresh, 60000) })
-onBeforeUnmount(() => { clearInterval(timer); controller?.abort(); controller = null })
+onMounted(() => { refreshAll(); timer = setInterval(refreshAll, 60000) })
+onBeforeUnmount(() => { clearInterval(timer); activityController?.abort(); controller?.abort(); controller = null })
 </script>
 
 <template>
@@ -72,7 +88,7 @@ onBeforeUnmount(() => { clearInterval(timer); controller?.abort(); controller = 
             <option value="all">全部角色</option><option value="user">仅用户</option><option value="admin">仅管理员</option>
           </select>
           <small v-if="report">更新于 {{ clock.format(new Date(report.updated)) }}</small>
-          <button class="refresh" type="button" aria-label="刷新用量" :disabled="loading" @click="refresh"><Icon name="refresh" /></button>
+          <button class="refresh" type="button" aria-label="刷新用量" :disabled="loading" @click="refreshAll"><Icon name="refresh" /></button>
         </div>
       </header>
       <div v-if="error" class="message" role="alert">{{ error }} <button @click="refresh">重试</button></div>
@@ -126,6 +142,8 @@ onBeforeUnmount(() => { clearInterval(timer); controller?.abort(); controller = 
           <button v-if="report.rankCount > 5" class="more" @click="toggleAll">{{ expanded ? '收起' : '查看全部（' + full(report.rankCount) + '）' }}</button>
         </section>
       </template>
+      <UsageActivityChart v-for="kind in ['tools','messages']" :key="kind" :kind="kind"
+        :report="activity" :error="activityError" @retry="refreshActivity" />
     </div>
   </main>
 </template>

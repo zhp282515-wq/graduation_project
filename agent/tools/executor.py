@@ -2,6 +2,7 @@ from typing import Any
 
 from agent.tools.base import ToolError, ToolResult
 from agent.tools.registry import ToolRegistry
+from session.usage import record_tool
 from models.base import ToolCall
 from utils.logger_tool import logger
 
@@ -53,6 +54,7 @@ def execute_tool(registry: ToolRegistry, tool_call: ToolCall) -> ToolResult:
     if problem:
         return ToolResult(content=f"工具 {tool_call.name} 的参数不符合要求：{problem}", status="error")
 
+    record_tool(tool.name)
     try:
         output = tool.run(**tool_call.arguments)
         if isinstance(output, ToolResult):
