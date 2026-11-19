@@ -56,6 +56,7 @@ class ApiTests(unittest.TestCase):
         self.stack.enter_context(patch.object(main, "MemoryExtractor"))
         self.stack.enter_context(patch.object(main, "MemoryJobs", return_value=self.jobs))
         self.stack.enter_context(patch.dict("os.environ", {"LANGGRAPH_POSTGRES_URI": "mock://tests", "AUTH_JWT_SECRET": "x"*48}))
+        self.stack.enter_context(patch.object(main, "start_logs"))
         self.stack.enter_context(patch.object(main, "setup_usage"))
         self.stack.enter_context(patch.object(main, "UserRepository"))
         self.stack.enter_context(patch.object(main, "ModelSettingsRepository"))
@@ -87,6 +88,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.text.count('"type": "done"'), 1)
         self.factory.assert_called_once()
         self.assertIsNone(self.runtime_factory.call_args.kwargs["tools"][-1].service)
+
+    def test_chat_audit_uses_terminal_event(self):
+        client = self.client()
+        for terminal, result in ((DONE, "成功"), ({"type":"run_failed","message":"private"}, "失败")):
+            self.runtime.stream.side_effect = lambda *a, **k: iter([terminal])
+            response = client.post("/api/chat",headers={"x-user-id":"u"},json={"session_id":"s","text":"private"})
+            self.assertEqual(response.status_code, 200)
+            row = main.app.state.dashboard_logs.submit.call_args.args[0]
+            self.assertEqual((row[3],row[6]), ("发送消息",result))
+            self.assertNotIn("private", str(row))
 
     def test_busy_send_and_delete_return_409_without_writing(self):
         client = self.client()

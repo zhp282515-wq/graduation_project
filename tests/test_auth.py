@@ -6,7 +6,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import jwt
 import psycopg
@@ -97,6 +97,48 @@ class AuthIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         client.headers['x-csrf-token']=response.json()['csrf_token']
         return response
+
+    def test_admin_logs_identity_privacy_and_paging(self):
+        import tempfile
+        from session.admin_logs import DashboardLogs, SCHEMA, import_history
+        with self.pool.connection() as conn:
+            conn.execute(SCHEMA)
+            conn.execute("TRUNCATE admin_log_events")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "FFan_2020-01-01.log"
+            path.write_text(("2020-01-01 09:30:00 - FFan - ERROR - deepseek.py:123 - [错误] secret-payload\n"
+                             "Traceback secret-stack\n") * 32, encoding="utf8")
+            import_history(self.pool, directory)
+            import_history(self.pool, directory)
+        writer = DashboardLogs(self.pool)
+        self.addCleanup(writer.stop)
+        with patch.object(main.app.state, "dashboard_logs", writer, create=True):
+            self.assertEqual(self.client.get("/api/admin/logs").status_code, 401)
+            self.client.post("/api/auth/login",json={"username":"alice","password":"wrong-password"})
+            self.login("alice")
+            self.assertEqual(self.client.get("/api/admin/logs").status_code,403)
+            self.client.post("/api/sessions")
+            self.login("administrator")
+            uid = self.alice["id"]
+            self.assertRegex(uid, r"^[a-f0-9]{32}$")
+            self.assertNotEqual(uid, self.bob["id"])
+            exact = self.client.get("/api/admin/users",params={"q":uid.upper()}).json()
+            self.assertEqual([u["id"] for u in exact["items"]], [uid])
+            self.assertEqual(self.client.delete("/api/admin/users/"+uid).status_code,200)
+            writer.worker.submit(lambda: None).result()
+            rows = self.client.get("/api/admin/logs?category=operations").json()["items"]
+            self.assertIn((None,"登录","失败"), [(r["actor_id"],r["event"],r["outcome"]) for r in rows])
+            self.assertIn((uid,"登录","成功"), [(r["actor_id"],r["event"],r["outcome"]) for r in rows])
+            filtered = self.client.get("/api/admin/logs",params={"category":"operations","actor_id":uid}).json()
+            self.assertTrue(filtered["items"])
+            self.assertTrue(all(r["actor_id"]==uid for r in filtered["items"]))
+            page = self.client.get("/api/admin/logs?level=ERROR&source=DeepSeek&end=2020-01-02")
+            self.assertNotIn("secret",page.text)
+            self.assertEqual(len(page.json()["items"]),30)
+            more = self.client.get("/api/admin/logs",params={"before":page.json()["next"]}).json()
+            self.assertEqual(len(more["items"]),2)
+            with patch.object(writer,"submit",side_effect=RuntimeError()):
+                self.assertEqual(self.client.post("/api/auth/logout").status_code,200)
 
     def test_usage_backfill_replays_only_reliable_rows(self):
         with self.pool.connection() as conn:

@@ -20,6 +20,7 @@ const items = computed(() => [
   { mode: 'archive', label: '典藏', latin: 'Archive', icon: 'archive', to: '/archive', index: '02' },
   { mode: 'atlas', label: '星野', latin: 'Atlas', icon: 'atlas', to: '/atlas', index: '03' },
   ...(auth.isAdmin ? [
+    { mode: 'logs', label: '日志', latin: 'Logs', icon: 'file', to: '/admin/logs' },
     { mode: 'usage', label: '用量', latin: 'Usage', icon: 'layers', to: '/admin/usage' },
     { mode: 'search', label: '检索', latin: 'Search', icon: 'search', to: '/admin/search', index: '04' },
     { mode: 'users', label: '账号', latin: 'Users', icon: 'users', to: '/admin/users', index: '05' },

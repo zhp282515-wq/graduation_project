@@ -46,11 +46,12 @@ class UserRepository:
 
     def list_page(self, q='', page=1):
         # Literal substring matching; wildcard characters are not special here.
-        args = (q,)
-        total = self.conn.execute('SELECT count(*) AS n FROM app_users WHERE strpos(lower(username),lower(%s))>0', args).fetchone()['n']
+        q = q.strip()
+        args = (q, q.lower())
+        total = self.conn.execute('SELECT count(*) AS n FROM app_users WHERE strpos(lower(username),lower(%s))>0 OR id=%s', args).fetchone()['n']
         rows = self.conn.execute(f'''SELECT {PUBLIC_FIELDS} FROM app_users
-            WHERE strpos(lower(username),lower(%s))>0 ORDER BY created_at,id LIMIT 20 OFFSET %s''',
-            (q, (page - 1) * 20)).fetchall()
+            WHERE strpos(lower(username),lower(%s))>0 OR id=%s ORDER BY created_at,id LIMIT 20 OFFSET %s''',
+            (*args, (page - 1) * 20)).fetchall()
         return {'items': rows, 'total': total, 'page': page, 'page_size': 20}
 
     def new_session(self, user_id):

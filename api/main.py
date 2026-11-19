@@ -57,6 +57,8 @@ from utils.prompts_loader import get_prompt
 
 from utils.query_tool import build_query
 from utils.conversation import saved_history
+from api.admin_logs import AuditMiddleware, router as logs_router
+from session.admin_logs import start_logs
 from api.usage import Reports, router as usage_router
 from session.usage import Attribution, UsageWriter, setup as setup_usage
 
@@ -122,6 +124,13 @@ async def lifespan(app: FastAPI):
         pg_pool.open()
         saver_pool.wait(timeout=10)
         pg_pool.wait(timeout=10)
+
+        app.state.dashboard_logs = None
+        try:
+            app.state.dashboard_logs = start_logs(pg_pool)
+            resources.callback(app.state.dashboard_logs.stop)
+        except Exception:
+            logger.exception("管理员日志初始化失败")
 
         saver = PostgresSaver(
             saver_pool,
@@ -226,6 +235,8 @@ def get_kb_repo(request: Request, user: dict = Depends(get_current_user)):
         yield ScopedRegistry(KbDocumentRepository(conn), user)
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(AuditMiddleware)
+app.include_router(logs_router)
 
 
 class ModelSettingsUpdate(BaseModel):
@@ -386,12 +397,14 @@ async def chat(
         resources.close()
         raise
 
-    return chat_response(stream, resources, background, actor)
+    return chat_response(stream, resources, background, actor, request)
 
 
-def chat_response(stream, resources: ExitStack, background: BackgroundTasks, actor: Attribution):
+def chat_response(stream, resources: ExitStack, background: BackgroundTasks, actor: Attribution, request: Request):
     def sse():
         while (event := actor.run(next, stream, None)) is not None:
+            if event.get("type") == "done":
+                request.state.chat_completed = True
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
     return ChatStreamingResponse(sse(), run=stream, cleanup=resources.close,
                                  background=background, media_type="text/event-stream")
@@ -422,7 +435,7 @@ async def regenerate_message(
     except BaseException:
         resources.close()
         raise
-    return chat_response(stream, resources, background, attribution(request, user, session_id))
+    return chat_response(stream, resources, background, attribution(request, user, session_id), request)
 
 
 

@@ -35,6 +35,7 @@ def get_current_user(request: Request):
         user = UserRepository(conn).session_user(claims['jti'], claims['sub'])
     if not user:
         raise HTTPException(401, '登录已失效，请重新登录')
+    request.state.audit_actor = user["id"]
     if request.method not in ('GET', 'HEAD', 'OPTIONS'):
         check_origin(request)
         if not hmac.compare_digest(request.headers.get('x-csrf-token', ''), settings.csrf(claims['jti'])):
@@ -82,6 +83,7 @@ class PasswordReset(BaseModel):
 
 
 def logged_in(request, response, repo, user):
+    request.state.audit_actor = user["id"]
     sid = repo.new_session(user['id'])
     settings = request.app.state.auth
     response.set_cookie(COOKIE, settings.issue(user['id'], sid), max_age=SESSION_SECONDS,
