@@ -6,11 +6,6 @@ import Icon from '../components/ui/Icon.vue'
 const periods = [1, 7, 30]
 const periodName = days => days === 1 ? '今日' : `近 ${days} 天`
 const full = value => Number(value ?? 0).toLocaleString('zh-CN')
-function compact(value) {
-  if (value >= 1e8) return Number((value / 1e8).toFixed(1)) + ' 亿'
-  if (value >= 1e4) return Number((value / 1e4).toFixed(1)) + ' 万'
-  return full(value)
-}
 const clock = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 const calendar = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'long', day: 'numeric', weekday: 'long' })
 const dayName = day => calendar.format(new Date(day.date + 'T12:00:00+08:00'))
@@ -86,7 +81,7 @@ onBeforeUnmount(() => { clearInterval(timer); controller?.abort(); controller = 
         <section class="cards" aria-label="用量概览">
           <article v-for="card in report.cards" :key="card.period" class="card" tabindex="0">
             <h2>{{ periodName(card.period) }}</h2>
-            <strong>{{ card.calls ? compact(card.total) : '—' }}</strong>
+            <strong>{{ card.calls ? full(card.total) : '—' }}</strong>
             <div class="stat-tip" role="tooltip">总量 {{ full(card.total) }} · 输入 {{ full(card.input) }} · 输出 {{ full(card.output) }}<template v-if="card.unclassified"> · 未拆分 {{ full(card.unclassified) }}</template><br>用户 {{ full(card.user) }} · 管理员 {{ full(card.admin) }}</div>
             <div class="split" :style="{ '--share': (100 * card.user / (card.total || 1)) + '%' }" :class="{ filled: card.total }" />
             <div class="stats">
@@ -126,7 +121,7 @@ onBeforeUnmount(() => { clearInterval(timer); controller?.abort(); controller = 
           <ol v-else><li v-for="(row, i) in report.ranks" :key="i">
             <span class="rank">{{ i+1 }}</span><span class="name">{{ row.label }} <small v-if="row.roles.includes('admin')" class="badge">管理员</small></span>
             <div class="track"><i :class="{ cool: row.roles.includes('admin') }" :style="{width: (100 * row.total / report.ranks[0].total) + '%'}" /></div>
-            <b :title="full(row.total)">{{ compact(row.total) }}</b>
+            <b>{{ full(row.total) }}</b>
           </li></ol>
           <button v-if="report.rankCount > 5" class="more" @click="toggleAll">{{ expanded ? '收起' : '查看全部（' + full(report.rankCount) + '）' }}</button>
         </section>
@@ -150,12 +145,13 @@ small,.stats,.rank { font-size:12px; color:var(--ink-3); }
 select,button { font:inherit; color:inherit; }
 select,.refresh,.tabs button,.more { background:var(--surface); border:1px solid var(--line); border-radius:7px; padding:5px 9px; }
 .refresh { display:grid; place-items:center; }
-.cards,.skeletons { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.skeletons { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.cards { display:flex; flex-wrap:wrap; gap:12px; }
 .card,.panel { background:var(--surface); border:1px solid var(--line); border-radius:12px; }
-.card { position:relative; padding:clamp(12px,2vw,22px); }
+.card { flex:1 1 0; max-width:100%; position:relative; padding:clamp(12px,2vw,22px); }
 .card h2 { font-size:15px; }
 .card strong,.day-detail strong { display:block; font-weight:500; font-variant-numeric:tabular-nums; font-family:var(--font-serif); }
-.card strong { white-space:nowrap; font-size:clamp(18px,3.4vw,45px); line-height:1.4; }
+.card strong { overflow-wrap:break-word; font-size:clamp(18px,3.4vw,45px); line-height:1.4; }
 .stat-tip { display:none; position:absolute; z-index:2; top:65%; left:8px; background:var(--ink); color:var(--bg); padding:8px; border-radius:6px; font-size:12px; }
 .card:is(:hover,:focus) .stat-tip { display:block; }
 .split,.track { height:5px; border-radius:5px; background:var(--line); overflow:hidden; }
@@ -211,5 +207,6 @@ li b { text-align:right; font-variant-numeric:tabular-nums; }
   .day-detail div { gap:4px; border:0; padding:0; margin:0; }
   .panel { margin-top:10px; }
   .card:last-child .stat-tip { left:auto; right:0; }
+  li { grid-template-columns:16px minmax(0,1fr) minmax(16px,1fr) max-content; gap:6px; }
 }
 </style>
